@@ -1,32 +1,133 @@
-import Metashape
-import os
 from pathlib import Path
+from typing import Union
 
-from lib.utils import (
-    check_license,
-    create_new_project,
-    save_project,
-    read_sensors_data,
-    match_images_sensors,
-)
+import Metashape
 
-check_license()
+from .utils import get_camera_by_label, get_marker_by_label
 
-PROJECT_NAME = "test.psx"
-CHUNK_NAME = "test"
+"""Project"""
 
-SENSOR_LIST = ["p1", "p2"]
-IMG_LIST = ["IMG_2814.jpg", "IMG_1289.jpg"]
 
-camera_table = {IMG_LIST[0]: SENSOR_LIST[0], IMG_LIST[1]: SENSOR_LIST[1]}
+def create_new_project(
+    project_name: str,
+    chunk_name: str = None,
+    read_only: bool = False,
+) -> Metashape.app.document:
+    doc = Metashape.Document()
+    doc.read_only = read_only
+    create_new_chunk(doc, chunk_name)
+    save_project(doc, project_name)
 
-doc = create_new_project(PROJECT_NAME, CHUNK_NAME)
-chunk = doc.chunk
+    return doc
 
-chunk.addPhotos(IMG_LIST)  # , layout=Metashape.MultiplaneLayout
-print(f"Cameras tot: {len(chunk.cameras)}")
 
-sensors = read_sensors_data([s + ".txt" for s in SENSOR_LIST])
-match_images_sensors(chunk, sensors, camera_table)
+def save_project(
+    document: Metashape.app.document,
+    project_name: str,
+) -> None:
+    try:
+        document.save(project_name)
+    except RuntimeError:
+        Metashape.app.messageBox("Can't save project")
 
-save_project(document=doc, project_name=PROJECT_NAME)
+
+def create_new_chunk(doc: Metashape.app.document, chunk_name: str = None) -> None:
+    chunk = doc.addChunk()
+    if chunk_name is not None:
+        chunk.label = chunk_name
+
+
+def clear_all_sensors(chunk) -> None:
+    for sensor in chunk.sensors:
+        chunk.remove(sensor)
+
+
+def cameras_from_bundler(
+    chunk: Metashape.Chunk,
+    fname: str,
+    image_list: str,
+) -> None:
+    if image_list:
+        chunk.importCameras(
+            str(fname),
+            format=Metashape.CamerasFormat.CamerasFormatBundler,
+            load_image_list=True,
+            image_list=str(image_list),
+        )
+        print("Cameras loaded successfully from Bundler .out, using image list file.")
+    else:
+        chunk.importCameras(
+            str(fname),
+            format=Metashape.CamerasFormat.CamerasFormatBundler,
+        )
+        print("Cameras loaded successfully from Bundler .out.")
+
+
+"""Markers"""
+
+
+def import_markers(
+    marker_image_file: Union[str, Path],
+    marker_world_file: Union[str, Path] = None,
+    chunk: Metashape.Chunk = None,
+) -> None:
+    """Import markers from file. If no chunk is provided, the markers are added to the current chunk."""
+
+    marker_image_file = Path(marker_image_file)
+    if not marker_image_file.exists():
+        raise FileNotFoundError(f"Marker image file {marker_image_file} not found.")
+    else:
+        with open(marker_image_file, "rt") as input:
+            marker_img_content = input.readlines()
+
+    if marker_world_file:
+        marker_world_file = Path(marker_world_file)
+        if not marker_world_file.exists():
+            raise FileNotFoundError(f"Marker world file {marker_world_file} not found.")
+        else:
+            with open(marker_world_file, "rt") as input:
+                input.readlines()
+
+    if chunk is None:
+        chunk = Metashape.app.document.chunk
+
+    for line in marker_img_content:
+        c_label, m_label, x_proj, y_proj = line.split(",")
+
+        # Ignore image extension
+        c_label = Path(c_label).stem
+
+        camera = get_camera_by_label(chunk, c_label)
+        if not camera:
+            print(f"{c_label} camera not found in project")
+            continue
+
+        marker = get_marker_by_label(chunk, m_label)
+        if not marker:
+            marker = chunk.addMarker()
+            marker.label = m_label
+
+        marker.projections[camera] = Metashape.Marker.Projection(
+            Metashape.Vector([float(x_proj), float(y_proj)]), True
+        )
+        print(f"Added projection for {m_label} on {c_label}")
+
+
+"""BUndle Adjustment"""
+
+
+def optimize_cameras(chunk: Metashape.Chunk, params: dict = {}) -> None:
+    chunk.optimizeCameras(
+        fit_f=params.get("f", True),
+        fit_cx=params.get("cx", True),
+        fit_cy=params.get("cy", True),
+        fit_b1=params.get("b1", False),
+        fit_b2=params.get("b2", False),
+        fit_k1=params.get("k1", True),
+        fit_k2=params.get("k2", True),
+        fit_k3=params.get("k3", True),
+        fit_k4=params.get("k4", False),
+        fit_p1=params.get("p1", True),
+        fit_p2=params.get("p2", True),
+        tiepoint_covariance=params.get("tiepoint_covariance", True),
+    )

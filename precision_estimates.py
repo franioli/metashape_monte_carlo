@@ -6,7 +6,7 @@ from pathlib import Path
 
 import Metashape
 
-from .src import func as ms
+from src import workflow as ms
 
 NaN = float("NaN")
 
@@ -38,6 +38,7 @@ optimise_intrinsics = {
     "k4": False,
     "p1": True,
     "p2": True,
+    "tiepoint_covariance": True,
 }
 
 # Points are exported as floats in binary ply files for speed and size, and thus cannot represent very small changes in large geographic coordinates.
@@ -85,12 +86,11 @@ num_act_cam_orients = sum(act_cam_orient_flags)
 random.seed(1)
 
 # Carry out an initial bundle adjustment to ensure that everything subsequent has a consistent reference starting point.
-ms.optimise_cameras(chunk, optimise_intrinsics)
+ms.optimize_cameras(chunk, optimise_intrinsics)
 
 # Compute sigma02 for the sparse points
 print("Computing sparse point sigma0...")
 proj = chunk.point_cloud.projections
-
 
 # Compute the re-projection error
 # chunk = doc.chunk
@@ -311,7 +311,7 @@ for line_ID in range(0, num_randomisations):
     print(out_gc_file)
 
     # Bundle adjustment
-    ms.optimise_cameras(chunk, optimise_intrinsics)
+    ms.optimize_cameras(chunk, optimise_intrinsics)
 
     # Export the control (catch and deal with legacy syntax)
     chunk.exportReference(
