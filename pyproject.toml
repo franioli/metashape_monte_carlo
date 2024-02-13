@@ -3,7 +3,7 @@ requires      = ["setuptools>=65", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "deep_image_matching"
+name = "metashape"
 version = "0.0.1"
 description = ""
 readme = "README.md"
@@ -22,15 +22,9 @@ dependencies = [
     "pillow",
     "pandas",
     "opencv-python",
-    "opencv-contrib-python",
-    "torch",
-    "torchvision",
-    "kornia",
     "h5py",
     "tqdm",
     "easydict",
-    "pytest",
-    "ttkthemes",
     "exifread",
 ]
 requires-python = ">=3.8"

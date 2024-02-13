@@ -6,6 +6,7 @@ test_projects/
 *.ply
 data/
 thirdparty/riccardo
+sandbox/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -3,52 +3,21 @@ from pathlib import Path
 
 import Metashape
 
-from .workflow import cameras_from_bundler, create_new_project, import_markers
-
-prm_to_optimize = {
-    "f": True,
-    "cx": True,
-    "cy": True,
-    "k1": True,
-    "k2": True,
-    "k3": True,
-    "k4": False,
-    "p1": True,
-    "p2": True,
-    "b1": False,
-    "b2": False,
-    "tiepoint_covariance": True,
-}
+from .workflow import (
+    cameras_from_bundler,
+    create_new_project,
+    import_markers,
+    optimize_cameras,
+)
 
 
-def project_from_bundler(
-    project_path: Path,
-    images_dir: Path,
-    bundler_file_path: Path,
-    bundler_im_list: Path,
+def add_markers(
+    chunk: Metashape.Chunk,
     marker_image_path: Path = None,
     marker_world_path: Path = None,
     marker_file_columns: str = "noxyz",
     prm_to_optimize: dict = {},
 ):
-    image_list = list(images_dir.glob("*"))
-    images = [str(x) for x in image_list if x.is_file()]
-
-    doc = create_new_project(str(project_path), read_only=False)
-    chunk = doc.chunk
-
-    # Add photos to chunk
-    chunk.addPhotos(images)
-    cameras_from_bundler(
-        chunk=chunk,
-        fname=bundler_file_path,
-        image_list=bundler_im_list,
-    )
-
-    # save project
-    doc.read_only = False
-    doc.save()
-
     # Import markers image coordinates
     if marker_image_path is not None:
         import_markers(
@@ -66,34 +35,32 @@ def project_from_bundler(
             columns=marker_file_columns,
         )
 
-    # optimize camera alignment
+    # # optimize camera alignment
     if prm_to_optimize:
-        chunk.optimizeCameras(
-            fit_f=prm_to_optimize["f"],
-            fit_cx=prm_to_optimize["cx"],
-            fit_cy=prm_to_optimize["cy"],
-            fit_k1=prm_to_optimize["k1"],
-            fit_k2=prm_to_optimize["k2"],
-            fit_k3=prm_to_optimize["k3"],
-            fit_k4=prm_to_optimize["k4"],
-            fit_p1=prm_to_optimize["p1"],
-            fit_p2=prm_to_optimize["p2"],
-            fit_b1=prm_to_optimize["b1"],
-            fit_b2=prm_to_optimize["b2"],
-            tiepoint_covariance=prm_to_optimize["tiepoint_covariance"],
+        optimize_cameras(
+            chunk=chunk,
+            prm_to_optimize=prm_to_optimize,
         )
 
-    # Export cameras and gcp residuals
 
-    # save project
-    doc.read_only = False
-    doc.save()
+def project_from_bundler(
+    project_path: Path,
+    images_dir: Path,
+    bundler_file_path: Path,
+    bundler_im_list: Path = None,
+    prm_to_optimize: dict = {},
+) -> Metashape.Document:
+    # Project path
+    project_path = Path(args.project_path)
+    project_dir = project_path.parent
+    if not project_dir.exists():
+        project_dir.mkdir(parents=True)
+    if project_path.suffix != ".psx":
+        project_path = project_path.name + ".psx"
 
-
-def main(args):
-    images_dir = Path(args.image_dir)
-    if not images_dir.exists():
-        raise FileNotFoundError(f"Images directory {images_dir} does not exist.")
+    # Bundler file path and image list path
+    if bundler_im_list is None:
+        args.bundler_im_list = args.bundler_file.parent / "bundler_list.txt"
     bundler_file_path = Path(args.bundler_file)
     if not bundler_file_path.exists():
         raise FileNotFoundError(f"Bundler file {bundler_file_path} does not exist.")
@@ -101,27 +68,41 @@ def main(args):
     if not bundler_im_list.exists():
         raise FileNotFoundError(f"Bundler image list {bundler_im_list} does not exist.")
 
-    project_path = Path(args.project_path)
-    project_dir = project_path.parent
+    # Images directory and image list
+    images_dir = Path(args.image_dir)
+    if not images_dir.exists():
+        raise FileNotFoundError(f"Images directory {images_dir} does not exist.")
+    image_list = list(images_dir.glob("*"))
+    images = [str(x) for x in image_list if x.is_file()]
 
-    if not project_dir.exists():
-        project_dir.mkdir(parents=True)
+    # Create new project
+    doc = create_new_project(str(project_path), read_only=False)
+    chunk = doc.chunk
 
-    if project_path.suffix != ".psx":
-        project_path = project_path.name + ".psx"
+    # Add photos to chunk
+    chunk.addPhotos(images)
+    cameras_from_bundler(
+        chunk=chunk,
+        fname=bundler_file_path,
+        image_list=bundler_im_list,
+    )
 
-    project_from_bundler(
-        project_path=project_path,
-        images_dir=images_dir,
-        bundler_file_path=bundler_file_path.resolve(),
-        bundler_im_list=bundler_im_list.resolve(),
+    # Optimize cameras
+    optimize_cameras(
+        chunk=chunk,
         prm_to_optimize=prm_to_optimize,
     )
+
+    # save project
+    doc.read_only = False
+    doc.save()
+
+    return doc
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Merge all COLMAP databases of the input folder."
+        description="Create a Metashape project from a Bundler file"
     )
 
     parser.add_argument(
@@ -151,7 +132,26 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.bundler_im_list is None:
-        args.bundler_im_list = args.bundler_file.parent / "bundler_list.txt"
+    prm_to_optimize = {
+        "f": True,
+        "cx": True,
+        "cy": True,
+        "k1": True,
+        "k2": True,
+        "k3": True,
+        "k4": False,
+        "p1": True,
+        "p2": True,
+        "b1": False,
+        "b2": False,
+        "tiepoint_covariance": True,
+    }
 
-    main(args)
+    doc = project_from_bundler(
+        project_path=args.project_path,
+        images_dir=args.image_dir,
+        bundler_file_path=Path(args.bundler_file).resolve(),
+        bundler_im_list=Path(args.bundler_im_list).resolve(),
+        prm_to_optimize=prm_to_optimize,
+    )
+    doc.save()
