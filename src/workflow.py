@@ -1,3 +1,4 @@
+import threading
 from pathlib import Path
 from typing import Union
 
@@ -21,20 +22,65 @@ def create_new_project(
     return doc
 
 
-def save_project(
+def save_project_interactive(
     document: Metashape.app.document,
-    project_name: str,
 ) -> None:
     try:
-        document.save(project_name)
+        document.save()
     except RuntimeError:
         Metashape.app.messageBox("Can't save project")
+
+
+def save_project(
+    doc: Metashape.app.document,
+    path: Union[str, Path] = None,
+    wait_saved: bool = True,
+):
+    def _save(doc, path=None):
+        doc.read_only = False
+        if path is not None:
+            doc.save(str(path))
+        else:
+            doc.save()
+
+    if doc.path is None and path is None:
+        raise ValueError(
+            "Document has not been saved yet and no path is specified. Please specify a path to save the document."
+        )
+
+    if path is not None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        x = threading.Thread(target=_save, args=(doc, path))
+    else:
+        x = threading.Thread(target=_save, args=(doc,))
+    x.start()
+
+    if wait_saved:
+        x.join()
+
+    return x
 
 
 def create_new_chunk(doc: Metashape.app.document, chunk_name: str = None) -> None:
     chunk = doc.addChunk()
     if chunk_name is not None:
         chunk.label = chunk_name
+
+
+def duplicate_chunk(
+    chunk: Metashape.Chunk,
+    new_name: str = None,
+) -> Metashape.Chunk:
+    new_chunk = chunk.copy()
+    if new_name is not None:
+        new_chunk.label = new_name
+    return new_chunk
+
+
+def expand_region(chunk, resize_fct: float) -> None:
+    chunk.resetRegion()
+    chunk.region.size = resize_fct * chunk.region.size
 
 
 def clear_all_sensors(chunk) -> None:

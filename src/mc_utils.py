@@ -2,56 +2,11 @@ import csv
 import math
 import os
 import random
-import threading
-from pathlib import Path
-from typing import Union
 
 import Metashape
 
 # Reset the random seed, so that all equivalent runs of this script are started identically
 random.seed(1)
-
-
-def save_project(
-    doc: Metashape.Chunk, path: Union[str, Path] = None, wait_saved: bool = True
-):
-    def save(doc, path=None):
-        doc.read_only = False
-        if path is not None:
-            doc.save(str(path))
-        else:
-            doc.save()
-
-    if doc.path is None and path is None:
-        raise ValueError(
-            "Document has not been saved yet and no path is specified. Please specify a path to save the document."
-        )
-
-    if path is not None:
-        x = threading.Thread(target=save, args=(doc, path))
-    else:
-        x = threading.Thread(target=save, args=(doc,))
-    x.start()
-
-    if wait_saved:
-        x.join()
-
-    return x
-
-
-def expand_region(chunk, resize_fct: float) -> None:
-    chunk.resetRegion()
-    chunk.region.size = resize_fct * chunk.region.size
-
-
-def duplicate_chunk(
-    chunk: Metashape.Chunk,
-    new_name: str = None,
-) -> Metashape.Chunk:
-    new_chunk = chunk.copy()
-    if new_name is not None:
-        new_chunk.label = new_name
-    return new_chunk
 
 
 def compute_coordinate_offset(chunk: Metashape.Chunk):
@@ -191,6 +146,10 @@ def add_cameras_gauss_noise(chunk: Metashape.Chunk, sigma: float = None):
 
 def add_markers_gauss_noise(chunk: Metashape.Chunk, sigma: float = None):
     for marker in chunk.markers:
+        # Do not add noise to check points
+        if not marker.enabled:
+            continue
+
         # If no sigma is provided for each camera, use the chunk's marker accuracy
         if not sigma:
             if not marker.reference.accuracy:
@@ -218,7 +177,10 @@ def add_observations_gauss_noise(chunk: Metashape.Chunk):
         projections = point_proj[camera]
         for proj in projections:
             noise = Metashape.Vector(
-                [random.gauss(0, tie_proj_x_stdev), random.gauss(0, tie_proj_y_stdev)]
+                [
+                    random.gauss(0, tie_proj_x_stdev),
+                    random.gauss(0, tie_proj_y_stdev),
+                ]
             )
             proj.coord += noise
 

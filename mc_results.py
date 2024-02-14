@@ -9,6 +9,7 @@ import laspy
 import matplotlib
 import numpy as np
 import open3d as o3d
+import pandas as pd
 import plotly.graph_objs as go
 import plotly.io as pio
 import seaborn as sns
@@ -154,6 +155,7 @@ def make_2D_scatter_plot(
     else:
         vmin, vmax = color_values.min(), color_values.max()
 
+    ax.margins(0.05)
     plot = ax.scatter(
         x_values,
         y_values,
@@ -166,6 +168,7 @@ def make_2D_scatter_plot(
     )
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
+    ax.set_aspect("equal")
     if title:
         ax.set_title(title)
 
@@ -253,8 +256,8 @@ def make_precision_plot(
     sz: np.ndarray,
     out_path: Path = "estimated_precision.png",
     point_size: int = 1,
-    scale_fct: float = 1000.0,
-    clim: List = None,
+    scale_fct: float = 1.0,
+    clim: List[List] = None,
     make_3D_plot: bool = False,
 ):
     """
@@ -271,11 +274,17 @@ def make_precision_plot(
         point_size (int, optional): The size of the points in the scatter plot. Defaults to 1.
         scale_fct (int, optional): The factor by which the standard deviation values are scaled for coloring. Defaults to 1000.
     """
+
+    if clim is not None:
+        # TODO: manage better the colorbar limits!
+        if len(clim) != 1:
+            [clim, clim, clim]
+
     # Create figure
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
     # Loop through each axis
-    for i, (title, prec) in enumerate(zip(["X", "Y", "Z"], [sx, sy, sz])):
+    for i, (title, prec, lim) in enumerate(zip(["X", "Y", "Z"], [sx, sy, sz], clim)):
         ax = make_2D_scatter_plot(
             x,
             y,
@@ -286,7 +295,7 @@ def make_precision_plot(
             cmap="viridis",
             title=f"Precision {title} [mm]",
             colorbar_label="Standard Deviation",
-            colorbar_limits=clim,
+            colorbar_limits=lim,
         )
 
     fig.tight_layout()
@@ -387,10 +396,161 @@ def write_las(
     return True
 
 
+def rmse(predicted: np.ndarray, reference: np.ndarray, axis: int = None) -> float:
+    """
+    Compute the root mean square error (RMSE) between two arrays.
+
+    Args:
+        predicted (np.ndarray): The predicted values.
+        reference (np.ndarray): The reference values.
+
+    Returns:
+        float: The RMSE between the predicted and target values.
+    """
+    return np.sqrt(np.mean((predicted - reference) ** 2, axis=axis))
+
+
+def compute_statistics(
+    estimated: np.ndarray,
+    reference: np.ndarray = None,
+    make_plot: bool = True,
+    figure_path: Path = "statistics.png",
+):
+    if reference is not None:
+        diff = estimated - reference
+    else:
+        diff = estimated
+    mean_diff = np.mean(diff, axis=0)
+    std_diff = np.std(diff, axis=0)
+    print("Mean difference [mm]:", mean_diff * 1000)
+    print("Standard deviation of difference [mm]:", std_diff * 1000)
+    if reference is not None:
+        rmse_val = rmse(reference, estimated, axis=0)
+        print("RMSE [mm]:", rmse_val * 1000)
+
+    if make_plot:
+        # Plot histogram of differences
+        norms = np.linalg.norm(diff, axis=1)
+        fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+        axes[0].hist(
+            norms,
+            bins=20,
+            color="skyblue",
+            edgecolor="black",
+            alpha=0.7,
+            density=True,
+        )
+        axes[0].set_xlabel("Difference")
+        axes[0].set_ylabel("Density")
+        axes[0].grid(True)
+
+        # Create a boxplot
+        sns.boxplot(data=diff, palette="Set3", ax=axes[1])
+        axes[1].set_xlabel("Axis")
+        axes[1].set_ylabel("Difference")
+        axes[1].grid(True)
+
+        # Add mean and standard deviation as text to the plot
+        mean_labels = [
+            f"Mean {coord}: {val * 1000:.6f} mm"
+            for coord, val in zip(["X", "Y", "Z"], mean_diff)
+        ]
+        std_labels = [
+            f"Std Dev {coord}: {val * 1000:.6f} mm"
+            for coord, val in zip(["X", "Y", "Z"], std_diff)
+        ]
+        if reference is not None:
+            rmse_label = [
+                f"RMSE {coord}: {val * 1000:.6f} mm"
+                for coord, val in zip(["X", "Y", "Z"], rmse_val)
+            ]
+        else:
+            rmse_label = []
+
+        fig.text(
+            0.8,
+            0.5,
+            "\n".join(mean_labels + std_labels + rmse_label),
+            ha="center",
+            va="center",
+            bbox=dict(facecolor="white", alpha=0.5),
+            transform=fig.transFigure,
+        )
+        fig.tight_layout(
+            rect=[0, 0.1, 0.7, 0.9]
+        )  # Adjust the layout to leave space for the text
+        fig.savefig(figure_path, dpi=300)
+
+
+def gcp_analysis(data: pd.DataFrame, fig_path: Path, print_stats: bool = False):
+    if print_stats:
+        for name, group in data.groupby("Enable"):
+            print(name, group.describe())
+
+    vmin, vmax = data["Z_error"].min(), data["Z_error"].max()
+    group_labels = {
+        1: "GCPs",
+        0: "CPs",
+    }
+    marker_style = {
+        1: "o",  # Enabled points
+        0: "D",  # Disabled points
+    }
+    fig, axes = plt.subplots(2, 1, figsize=(8, 6))
+    # Upper plot: Scatter plot of points with Z_error as color
+    axes[0].margins(0.05)
+    legend_labels = []
+    for enabled, group in data.groupby("Enable"):
+        scatter = axes[0].scatter(
+            group["X"],
+            group["Y"],
+            c=group["Z_error"],
+            cmap="viridis",
+            alpha=0.7,
+            marker=marker_style[enabled],
+            vmin=vmin,
+            vmax=vmax,
+        )
+        legend_labels.append(group_labels[enabled])
+    cbar = plt.colorbar(scatter, label="Z Error", ax=axes[0])
+    axes[0].set_xlabel("X")
+    axes[0].set_ylabel("Y")
+    axes[0].set_title("2D Scatter Plot of Control Points (CPs)")
+    axes[0].set_aspect("equal")
+    axes[0].legend(legend_labels)
+
+    # Compute baricenter of GCPs
+    gcp_baricenter = data[["X", "Y", "Z"]].mean()
+    data["GCP_distance"] = np.linalg.norm(
+        data[["X", "Y", "Z"]].values - gcp_baricenter.values, axis=1
+    )
+
+    # Lower plot: distance of each point from the baricenter vs Z error
+    axes[1].margins(0.05)
+    for name, group in data.groupby("Enable"):
+        axes[1].scatter(
+            group["GCP_distance"],
+            group["Z_error"],
+            marker=marker_style[name],
+            c="red" if name == 1 else "blue",
+            alpha=0.7,
+        )
+    axes[1].set_xlabel("Distance from GCP Baricenter")
+    axes[1].set_ylabel("Z Error")
+    axes[1].set_title("Distance from GCP Baricenter vs Z Error")
+    axes[1].legend(legend_labels)
+
+    plt.tight_layout()
+    fig.savefig(fig_path, dpi=300)
+    plt.close(fig)
+
+
 def main(
     proj_dir,
     pcd_ext: str = "ply",
-    compute_full_covariance: bool = False,
+    offset: np.ndarray = np.array([0.0, 0.0, 0.0]),
+    use_dask: bool = False,
+    compute_full_covariance: bool = True,
     cov_ddof: int = 1,
 ):
     # Get pcd list
@@ -413,7 +573,6 @@ def main(
     stack = lazy_load_pcd_stack(pcd_list)
 
     # Load the data and compute the mean and std with dask
-    use_dask = False
     if use_dask:
         operations = [
             stack.mean(axis=0),
@@ -427,48 +586,26 @@ def main(
         mean = np.mean(stack, axis=0)
         std = np.std(stack, axis=0, ddof=cov_ddof)
 
+    # Compute full covariance matrix for each point (note that all the pcd are loaded in memory at once here!)
+    if compute_full_covariance:
+        skip_cov = False
+        try:
+
+            def compute_covariance(points):
+                return np.cov(points, rowvar=False, ddof=cov_ddof)
+
+            if isinstance(stack, da.Array):
+                stack = np.array(stack)
+            np_cov = [compute_covariance(stack[:, i, :]) for i in range(stack.shape[1])]
+            np.sqrt(np_cov[0].diagonal()) - std[0]
+        except MemoryError:
+            logging.error("Not enough memory to compute full covariance matrix")
+            skip_cov = True
+    else:
+        skip_cov = True
+
     # # Add offset to the mean point coordinates
-    # mean += offset
-
-    # Compute some statistics between the reference pcd and the mean pcd from MC
-    ref_mc_diff = ref_pcd - mean
-
-    # Compute statistics
-    mean_diff = np.mean(ref_mc_diff, axis=0)
-    std_diff = np.std(ref_mc_diff, axis=0)
-    print("Mean difference:", mean_diff)
-    print("Standard deviation of difference:", std_diff)
-
-    # Plot histogram of differences
-    diff_norm = np.linalg.norm(ref_mc_diff, axis=1)
-    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-    axes[0].hist(
-        diff_norm, bins=20, color="skyblue", edgecolor="black", alpha=0.7, density=True
-    )
-    axes[0].set_xlabel("Difference")
-    axes[0].set_ylabel("Density")
-    axes[0].grid(True)
-
-    # Create a boxplot
-    sns.boxplot(data=ref_mc_diff, palette="Set3")
-    axes[1].set_xlabel("Axis")
-    axes[1].set_ylabel("Difference")
-    axes[1].grid(True)
-    fig.tight_layout()
-    fig.savefig(proj_dir / "difference_statistics.png", dpi=300)
-
-    # Make a 2D precision plot
-    make_precision_plot(
-        mean[:, 0],
-        mean[:, 1],
-        mean[:, 2],
-        std[:, 0],
-        std[:, 1],
-        std[:, 2],
-        proj_dir / "estimated_precision.png",
-        clim=[0, 10],
-        make_3D_plot=True,
-    )
+    mean += offset
 
     # Estimate a Helmert transformation between the mean pcd and the ref.
     T = tf.affine_matrix_from_points(
@@ -481,18 +618,53 @@ def main(
     logging.info(f"Angles: {angles_deg} deg")
     logging.info(f"Scale: {scale_percent:.6}%")
 
-    # Compute full covariance matrix for each point (note that all the pcd are loaded in memory at once here!)
-    if compute_full_covariance:
+    pts_homog = np.hstack([mean, np.ones((mean.shape[0], 1))]).T
+    points_roto = ((T @ pts_homog).T)[:, :3]
 
-        def compute_covariance(points):
-            return np.cov(points, rowvar=False, ddof=cov_ddof)
+    if not skip_cov:
+        # Rotate covariance matrix and compute new standard deviation
+        R = T[:3, :3]
+        cov_roto = np.array([R @ cov @ R.T for cov in np_cov])
+        std_roto = np.sqrt(np.array([np.diag(cov) for cov in cov_roto]))
 
-        if isinstance(stack, da.Array):
-            np_stack = np.array(stack)
-        np_cov = [
-            compute_covariance(np_stack[:, i, :]) for i in range(np_stack.shape[1])
-        ]
-        np.sqrt(np_cov[0].diagonal()) - std[0]
+    # Compute statistics
+    compute_statistics(
+        estimated=mean,
+        reference=ref_pcd,
+        make_plot=True,
+        figure_path=proj_dir / "difference_stats.png",
+    )
+
+    # Compute statistics for the rototranslated points
+    compute_statistics(
+        estimated=points_roto,
+        reference=ref_pcd,
+        make_plot=True,
+        figure_path=proj_dir / "difference_helmert_stats.png",
+    )
+
+    # Make a 2D precision plot
+    scale_fct = 1e3
+    clim_quantile = 0.95
+    clim = [
+        (
+            np.floor(np.quantile(std[:, i], 1 - clim_quantile) * scale_fct / 2) * 2,
+            np.ceil(np.quantile(std[:, i], clim_quantile) * scale_fct / 2) * 2,
+        )
+        for i in range(3)
+    ]
+    make_precision_plot(
+        mean[:, 0],
+        mean[:, 1],
+        mean[:, 2],
+        std[:, 0],
+        std[:, 1],
+        std[:, 2],
+        proj_dir / "estimated_precision.png",
+        scale_fct=scale_fct,
+        clim=clim,
+        make_3D_plot=True,
+    )
 
     # Create a las pcd with laspy
     rgb = np.uint16(np.asarray(o3d.io.read_point_cloud(str(ref_pcd_path)).colors) * 255)
@@ -500,7 +672,6 @@ def main(
         "sx": std[:, 0],
         "sy": std[:, 1],
         "sz": std[:, 2],
-        "diff_norm": diff_norm,
     }
     write_las(
         proj_dir / "point_precision.las",
@@ -511,34 +682,66 @@ def main(
         **scalar_fields,
     )
 
+    scalar_fields = {
+        "sx": std_roto[:, 0],
+        "sy": std_roto[:, 1],
+        "sz": std_roto[:, 2],
+    }
+    write_las(
+        proj_dir / "point_precision_helmert.las",
+        points_roto[:, 0],
+        points_roto[:, 1],
+        points_roto[:, 2],
+        rgb=rgb,
+        **scalar_fields,
+    )
+
     # Make 2D precision plot with point precision from MS
     ms_ref = proj_dir / "sparse_pts_reference_cov.csv"
-    data = np.genfromtxt(ms_ref, delimiter=",", skip_header=1)
+    if ms_ref.exists():
+        data = np.genfromtxt(ms_ref, delimiter=",", skip_header=1)
 
-    # Read coordinate offset used in MC simulations from disk
-    off = np.loadtxt(proj_dir / "_coordinate_local_origin.txt")
+        # Read coordinate offset used in MC simulations from disk
+        off = np.loadtxt(proj_dir / "_coordinate_local_origin.txt")
 
-    xyz = data[:, 1:4] - off
-    rgb = data[:, 4:7]
-    precision_and_variances = data[:, 7:]
-    make_precision_plot(
-        xyz[:, 0],
-        xyz[:, 1],
-        xyz[:, 2],
-        precision_and_variances[:, 0],
-        precision_and_variances[:, 1],
-        precision_and_variances[:, 2],
-        proj_dir / "metashape_reference_precision.png",
-        clim=[0, 10],
-    )
+        xyz = data[:, 1:4] - off
+        rgb = data[:, 4:7]
+        precision_and_variances = data[:, 7:]
+        make_precision_plot(
+            xyz[:, 0],
+            xyz[:, 1],
+            xyz[:, 2],
+            precision_and_variances[:, 0],
+            precision_and_variances[:, 1],
+            precision_and_variances[:, 2],
+            proj_dir / "metashape_reference_precision.png",
+            scale_fct=scale_fct,
+            clim=clim,
+        )
+    else:
+        logging.info("No reference precision computed from metashape data found")
+
+    # Read ground reference data
+    gc_files = sorted((proj_dir / "Monte_Carlo_output").glob("*_GC.txt"))
+    file = gc_files[0]
+
+    # Load the data into a pandas DataFrame, skipping the first header line
+    data = pd.read_csv(file, skiprows=1)
+
+    # Plot the scatter plot
+    fig_path = proj_dir / "gcp_analysis.png"
+    gcp_analysis(data, fig_path, print_stats=True)
+
+    # Read cameras data
 
     logging.info("Done")
 
 
 if __name__ == "__main__":
-    proj_dir = Path("data/calib")
+    proj_dir = Path("data/rossia")
     pcd_ext = "ply"
     compute_full_covariance = True
+    use_dask = False
     cov_ddof = 1
 
     # Random data parameters
@@ -556,6 +759,7 @@ if __name__ == "__main__":
     main(
         proj_dir,
         pcd_ext=pcd_ext,
+        use_dask=use_dask,
         compute_full_covariance=compute_full_covariance,
         cov_ddof=cov_ddof,
     )
