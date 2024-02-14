@@ -60,6 +60,86 @@ def load_pcd_stack(pcd_list):
     return stack
 
 
+def write_pcd_las(
+    path: Path,
+    x: np.ndarray,
+    y: np.ndarray,
+    z: np.ndarray,
+    rgb: np.ndarray = None,
+    offset=np.array([0.0, 0.0, 0.0]),
+    precision: float = 1e-5,
+    **kwargs,
+) -> bool:
+    """
+    Write point cloud data to a LAS file.
+
+    Args:
+        path (Path): The path to save the LAS file.
+        x (np.ndarray): Array of x-coordinates of the points.
+        y (np.ndarray): Array of y-coordinates of the points.
+        z (np.ndarray): Array of z-coordinates of the points.
+        rgb (np.ndarray, optional): Array of RGB values for each point. Must be a 3xn numpy array of 16-bit unsigned integers. Defaults to None.
+        offset (np.ndarray, optional): Offset to be added to the coordinates.Defaults to np.array([0.0, 0.0, 0.0]).
+        precision (float, optional): Precision of the coordinates. Defaults to 1e-5.
+        **kwargs: Additional keyword arguments to be written as extra scalar fields in the LAS file.
+
+    Returns:
+        bool: True if writing to the LAS file is successful, False otherwise.
+
+    Raises:
+        TypeError: If the rgb argument is not a 3xn numpy array of 16-bit unsigned integers.
+
+    Note:
+        - If the path does not end with '.las', '.las' will be appended to the file name.
+        - If the rgb argument is provided, it must be a 3xn numpy array of 16-bit unsigned integers.
+        - The header of the LAS file will be set to version "1.4" and point format "2".
+        - Additional keyword arguments (**kwargs) will be written as extra scalar fields in the LAS file.
+    """
+    path = Path(path)
+    if path.suffix != ".las":
+        path = path.parent / (path.name + ".las")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if rgb is not None:
+        if not isinstance(rgb, np.ndarray) or rgb.shape[1] != 3:
+            raise TypeError(
+                "Inval rgb argument. It must a 3xn numpy array of 16bit unsigned int"
+            )
+        if rgb.dtype == np.uint8:
+            rgb = rgb.astype(np.uint16)
+        elif rgb.dtype != np.uint16:
+            raise TypeError(
+                "Inval rgb argument. It must a 3xn numpy array of 16bit unsigned int"
+            )
+
+    header = laspy.LasHeader(version="1.4", point_format=3)
+    header.add_extra_dims(
+        [laspy.ExtraBytesParams(k, type=np.float32) for k in kwargs.keys()]
+    )
+    header.offsets = offset
+    header.scales = [
+        precision for _ in range(3)
+    ]  # This is the precision of the coordinates
+
+    with laspy.open(path, mode="w", header=header) as writer:
+        point_record = laspy.ScaleAwarePointRecord.zeros(x.shape[0], header=header)
+        point_record.x = x.astype(np.float32)
+        point_record.y = y.astype(np.float32)
+        point_record.z = z.astype(np.float32)
+        if rgb is not None:
+            point_record.red = rgb[:, 0]
+            point_record.green = rgb[:, 1]
+            point_record.blue = rgb[:, 2]
+
+        for k, v in kwargs.items():
+            setattr(point_record, k, v)
+
+        writer.write_points(point_record)
+
+    return True
+
+
 def generate_random_data(directory, npcd, npoints, noise_std):
     directory = Path(directory)
     if directory.exists():
@@ -316,86 +396,6 @@ def make_precision_plot(
         )
 
 
-def write_las(
-    path: Path,
-    x: np.ndarray,
-    y: np.ndarray,
-    z: np.ndarray,
-    rgb: np.ndarray = None,
-    offset=np.array([0.0, 0.0, 0.0]),
-    precision: float = 1e-5,
-    **kwargs,
-) -> bool:
-    """
-    Write point cloud data to a LAS file.
-
-    Args:
-        path (Path): The path to save the LAS file.
-        x (np.ndarray): Array of x-coordinates of the points.
-        y (np.ndarray): Array of y-coordinates of the points.
-        z (np.ndarray): Array of z-coordinates of the points.
-        rgb (np.ndarray, optional): Array of RGB values for each point. Must be a 3xn numpy array of 16-bit unsigned integers. Defaults to None.
-        offset (np.ndarray, optional): Offset to be added to the coordinates.Defaults to np.array([0.0, 0.0, 0.0]).
-        precision (float, optional): Precision of the coordinates. Defaults to 1e-5.
-        **kwargs: Additional keyword arguments to be written as extra scalar fields in the LAS file.
-
-    Returns:
-        bool: True if writing to the LAS file is successful, False otherwise.
-
-    Raises:
-        TypeError: If the rgb argument is not a 3xn numpy array of 16-bit unsigned integers.
-
-    Note:
-        - If the path does not end with '.las', '.las' will be appended to the file name.
-        - If the rgb argument is provided, it must be a 3xn numpy array of 16-bit unsigned integers.
-        - The header of the LAS file will be set to version "1.4" and point format "2".
-        - Additional keyword arguments (**kwargs) will be written as extra scalar fields in the LAS file.
-    """
-    path = Path(path)
-    if path.suffix != ".las":
-        path = path.parent / (path.name + ".las")
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    if rgb is not None:
-        if not isinstance(rgb, np.ndarray) or rgb.shape[1] != 3:
-            raise TypeError(
-                "Inval rgb argument. It must a 3xn numpy array of 16bit unsigned int"
-            )
-        if rgb.dtype == np.uint8:
-            rgb = rgb.astype(np.uint16)
-        elif rgb.dtype != np.uint16:
-            raise TypeError(
-                "Inval rgb argument. It must a 3xn numpy array of 16bit unsigned int"
-            )
-
-    header = laspy.LasHeader(version="1.4", point_format=3)
-    header.add_extra_dims(
-        [laspy.ExtraBytesParams(k, type=np.float32) for k in kwargs.keys()]
-    )
-    header.offsets = offset
-    header.scales = [
-        precision for _ in range(3)
-    ]  # This is the precision of the coordinates
-
-    with laspy.open(path, mode="w", header=header) as writer:
-        point_record = laspy.ScaleAwarePointRecord.zeros(x.shape[0], header=header)
-        point_record.x = x.astype(np.float32)
-        point_record.y = y.astype(np.float32)
-        point_record.z = z.astype(np.float32)
-        if rgb is not None:
-            point_record.red = rgb[:, 0]
-            point_record.green = rgb[:, 1]
-            point_record.blue = rgb[:, 2]
-
-        for k, v in kwargs.items():
-            setattr(point_record, k, v)
-
-        writer.write_points(point_record)
-
-    return True
-
-
 def rmse(predicted: np.ndarray, reference: np.ndarray, axis: int = None) -> float:
     """
     Compute the root mean square error (RMSE) between two arrays.
@@ -482,7 +482,7 @@ def compute_statistics(
         fig.savefig(figure_path, dpi=300)
 
 
-def gcp_analysis(data: pd.DataFrame, fig_path: Path, print_stats: bool = False):
+def make_doming_plot(data: pd.DataFrame, fig_path: Path, print_stats: bool = False):
     if print_stats:
         for name, group in data.groupby("Enable"):
             print(name, group.describe())
@@ -506,7 +506,7 @@ def gcp_analysis(data: pd.DataFrame, fig_path: Path, print_stats: bool = False):
             group["Y"],
             c=group["Z_error"],
             cmap="viridis",
-            alpha=0.7,
+            alpha=0.9,
             marker=marker_style[enabled],
             vmin=vmin,
             vmax=vmax,
@@ -533,7 +533,7 @@ def gcp_analysis(data: pd.DataFrame, fig_path: Path, print_stats: bool = False):
             group["Z_error"],
             marker=marker_style[name],
             c="red" if name == 1 else "blue",
-            alpha=0.7,
+            alpha=0.9,
         )
     axes[1].set_xlabel("Distance from GCP Baricenter")
     axes[1].set_ylabel("Z Error")
@@ -673,7 +673,7 @@ def main(
         "sy": std[:, 1],
         "sz": std[:, 2],
     }
-    write_las(
+    write_pcd_las(
         proj_dir / "point_precision.las",
         mean[:, 0],
         mean[:, 1],
@@ -687,7 +687,7 @@ def main(
         "sy": std_roto[:, 1],
         "sz": std_roto[:, 2],
     }
-    write_las(
+    write_pcd_las(
         proj_dir / "point_precision_helmert.las",
         points_roto[:, 0],
         points_roto[:, 1],
@@ -695,6 +695,36 @@ def main(
         rgb=rgb,
         **scalar_fields,
     )
+
+    # Do Ground Control Analysis
+    gc_files = sorted((proj_dir / "Monte_Carlo_output").glob("*_GC.txt"))
+
+    # Make doming plot from ground control data for the first file
+    file = gc_files[0]
+    data = pd.read_csv(file, skiprows=1, header=0)
+    fig_path = proj_dir / "doming_effect.png"
+
+    make_doming_plot(data, fig_path, print_stats=False)
+
+    # Compute summary statistics for all ground control files
+    def get_rmse_max(file):
+        data = pd.read_csv(file, skiprows=1, header=0)
+        rmse_z = np.sqrt((data["Z_error"] ** 2).mean())
+        max_z_err = data["Z_error"].abs().max()
+        return rmse_z, max_z_err
+
+    delayed_tasks = []
+    for file in gc_files:
+        delayed_tasks.append(dask.delayed(get_rmse_max)(file))
+    res = dask.compute(*delayed_tasks)
+
+    rmse_z, max_z_err = zip(*res)
+    rmse_z = np.array(rmse_z)
+    max_z_err = np.array(max_z_err)
+    logging.info(f"Mean Z RMSE: {rmse_z.mean():.4f} m")
+    logging.info(f"Max Z error: {max_z_err.mean():.4f} m")
+
+    # Read cameras data
 
     # Make 2D precision plot with point precision from MS
     ms_ref = proj_dir / "sparse_pts_reference_cov.csv"
@@ -706,14 +736,16 @@ def main(
 
         xyz = data[:, 1:4] - off
         rgb = data[:, 4:7]
-        precision_and_variances = data[:, 7:]
+        precision = data[:, 7:10]
+        covariances = data[:, 10:]
+        clim = [(0, 30) for _ in range(3)]
         make_precision_plot(
             xyz[:, 0],
             xyz[:, 1],
             xyz[:, 2],
-            precision_and_variances[:, 0],
-            precision_and_variances[:, 1],
-            precision_and_variances[:, 2],
+            precision[:, 0],
+            precision[:, 1],
+            precision[:, 2],
             proj_dir / "metashape_reference_precision.png",
             scale_fct=scale_fct,
             clim=clim,
@@ -721,24 +753,11 @@ def main(
     else:
         logging.info("No reference precision computed from metashape data found")
 
-    # Read ground reference data
-    gc_files = sorted((proj_dir / "Monte_Carlo_output").glob("*_GC.txt"))
-    file = gc_files[0]
-
-    # Load the data into a pandas DataFrame, skipping the first header line
-    data = pd.read_csv(file, skiprows=1)
-
-    # Plot the scatter plot
-    fig_path = proj_dir / "gcp_analysis.png"
-    gcp_analysis(data, fig_path, print_stats=True)
-
-    # Read cameras data
-
     logging.info("Done")
 
 
 if __name__ == "__main__":
-    proj_dir = Path("data/rossia")
+    proj_dir = Path("data/rossia/simulation_rossia_5gcp")
     pcd_ext = "ply"
     compute_full_covariance = True
     use_dask = False

@@ -5,8 +5,8 @@ import random
 
 import Metashape
 
-# Reset the random seed, so that all equivalent runs of this script are started identically
-random.seed(1)
+# # Reset the random seed, so that all equivalent runs of this script are started identically
+# random.seed(1)
 
 
 def compute_coordinate_offset(chunk: Metashape.Chunk):
@@ -81,7 +81,8 @@ def compute_observation_distances(chunk: Metashape.Chunk, dir_path: str) -> str:
     return fpath
 
 
-def set_chunk_zero_error(chunk: Metashape.Chunk, dir_path: str = None):
+def set_chunk_zero_error(chunk: Metashape.Chunk):
+    # Get the chunk coordinate system
     crs = chunk.crs
 
     # Set the marker locations be zero error, from which we add simulated error
@@ -99,6 +100,7 @@ def set_chunk_zero_error(chunk: Metashape.Chunk, dir_path: str = None):
         if not camera.transform:
             continue
 
+        # Set the point projections be zero error
         point_index = 0
         for proj in point_proj[camera]:
             track_id = proj.track_id
@@ -109,7 +111,7 @@ def set_chunk_zero_error(chunk: Metashape.Chunk, dir_path: str = None):
                     continue
                 proj.coord = camera.project(points[point_index].coord)
 
-        # Set the marker points be zero error, from which we can add simulated error
+        # Set the marker projections be zero error
         for markerIDx, marker in enumerate(chunk.markers):
             if (not marker.projections[camera]) or (
                 not chunk.markers[markerIDx].position
@@ -119,13 +121,13 @@ def set_chunk_zero_error(chunk: Metashape.Chunk, dir_path: str = None):
                 chunk.markers[markerIDx].position
             )
 
-    # Export this 'zero error' marker data to file
-    if dir_path:
-        chunk.exportMarkers(os.path.join(dir_path, "referenceMarkers.xml"))
-
 
 def add_cameras_gauss_noise(chunk: Metashape.Chunk, sigma: float = None):
     for cam in chunk.cameras:
+        # Skip cameras without a reference data enabled
+        if not cam.reference.enabled:
+            continue
+
         # Skip cameras without a transform
         if not cam.transform:
             continue
@@ -147,7 +149,7 @@ def add_cameras_gauss_noise(chunk: Metashape.Chunk, sigma: float = None):
 def add_markers_gauss_noise(chunk: Metashape.Chunk, sigma: float = None):
     for marker in chunk.markers:
         # Do not add noise to check points
-        if not marker.enabled:
+        if not marker.reference.enabled:
             continue
 
         # If no sigma is provided for each camera, use the chunk's marker accuracy
