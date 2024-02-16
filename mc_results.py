@@ -757,7 +757,7 @@ def main(
 
 
 if __name__ == "__main__":
-    proj_dir = Path("data/rossia/simulation_rossia_5gcp")
+    proj_dir = Path("data/rossia/simulation_rossia_4gcp")
     pcd_ext = "ply"
     compute_full_covariance = True
     use_dask = False
