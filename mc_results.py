@@ -1,4 +1,3 @@
-import logging
 import shutil
 from pathlib import Path
 from typing import List
@@ -15,10 +14,12 @@ import plotly.io as pio
 import seaborn as sns
 from matplotlib import pyplot as plt
 
+from logger import get_logger
 from thirdparty import transformations as tf
 
 matplotlib.use("agg")
-logging.basicConfig(level=logging.INFO)
+
+logger = get_logger("MC")
 
 
 def load_pcd(pcd_path: Path) -> np.ndarray:
@@ -556,16 +557,16 @@ def main(
     # Get pcd list
     pcd_dir = proj_dir / "Monte_Carlo_output"
     pcd_list = sorted(list(pcd_dir.glob(f"*.{pcd_ext}")))
-    logging.info(f"Found {len(pcd_list)} pointclouds in {pcd_dir}")
+    logger.info(f"Found {len(pcd_list)} pointclouds in {pcd_dir}")
 
     # Read reference point cloud from MC simulation
     ref_pcd_path = pcd_dir.parent / "sparse_pts_reference.ply"
     if ref_pcd_path.exists():
         ref_pcd = load_pcd(ref_pcd_path)
-        logging.info(f"Loaded reference pointcloud from {ref_pcd_path}")
+        logger.info(f"Loaded reference pointcloud from {ref_pcd_path}")
     else:
         ref_pcd = load_pcd(pcd_list[0])
-        logging.info(
+        logger.info(
             "Reference pointcloud not found, using first pointcloud as reference"
         )
 
@@ -578,7 +579,7 @@ def main(
             stack.mean(axis=0),
             stack.std(axis=0, ddof=cov_ddof),
         ]
-        logging.info("Computing mean and std with dask...")
+        logger.info("Computing mean and std with dask...")
         mean, std = dask.compute(*operations)
     else:
         # Load all the data into memory and compute the mean and std
@@ -599,7 +600,7 @@ def main(
             np_cov = [compute_covariance(stack[:, i, :]) for i in range(stack.shape[1])]
             np.sqrt(np_cov[0].diagonal()) - std[0]
         except MemoryError:
-            logging.error("Not enough memory to compute full covariance matrix")
+            logger.error("Not enough memory to compute full covariance matrix")
             skip_cov = True
     else:
         skip_cov = True
@@ -614,9 +615,9 @@ def main(
     scale, _, angles, translation, _ = tf.decompose_matrix(T)
     scale_percent = scale.mean() - 1
     angles_deg = np.rad2deg(angles)
-    logging.info(f"Translation: {translation*1000} mm")
-    logging.info(f"Angles: {angles_deg} deg")
-    logging.info(f"Scale: {scale_percent:.6}%")
+    logger.info(f"Translation: {translation*1000} mm")
+    logger.info(f"Angles: {angles_deg} deg")
+    logger.info(f"Scale: {scale_percent:.6}%")
 
     pts_homog = np.hstack([mean, np.ones((mean.shape[0], 1))]).T
     points_roto = ((T @ pts_homog).T)[:, :3]
@@ -721,8 +722,8 @@ def main(
     rmse_z, max_z_err = zip(*res)
     rmse_z = np.array(rmse_z)
     max_z_err = np.array(max_z_err)
-    logging.info(f"Mean Z RMSE: {rmse_z.mean():.4f} m")
-    logging.info(f"Max Z error: {max_z_err.mean():.4f} m")
+    logger.info(f"Mean Z RMSE: {rmse_z.mean():.4f} m")
+    logger.info(f"Max Z error: {max_z_err.mean():.4f} m")
 
     # Read cameras data
 
@@ -751,9 +752,9 @@ def main(
             clim=clim,
         )
     else:
-        logging.info("No reference precision computed from metashape data found")
+        logger.info("No reference precision computed from metashape data found")
 
-    logging.info("Done")
+    logger.info("Done")
 
 
 if __name__ == "__main__":
@@ -773,7 +774,7 @@ if __name__ == "__main__":
     if generate_random_pcd:
         proj_dir = Path("data/test")
         generate_random_data(proj_dir, num_pcd, num_points, noise_std)
-        logging.info("Generated random point cloud data")
+        logger.info("Generated random point cloud data")
 
     main(
         proj_dir,

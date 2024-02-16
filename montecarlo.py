@@ -1,5 +1,4 @@
 import csv
-import logging
 import math
 import shutil
 from multiprocessing import Pool
@@ -8,29 +7,29 @@ from typing import Dict
 
 import Metashape
 
+import mc_results
+from logger import setup_logger
 from src import mc_utils
 from src import workflow as ms
 from src.export_to_file import save_sparse
 
 NaN = float("NaN")
-logging.basicConfig(level=logging.DEBUG)
+logger = setup_logger(name="MC", log_level="DEBUG")
 
-default_intrinsics_optim = dict = (
-    {
-        "f": True,
-        "cx": True,
-        "cy": True,
-        "b1": False,
-        "b2": False,
-        "k1": True,
-        "k2": True,
-        "k3": True,
-        "k4": False,
-        "p1": True,
-        "p2": True,
-        "tiepoint_covariance": True,
-    },
-)
+default_intrinsics_optim = dict = {
+    "f": True,
+    "cx": True,
+    "cy": True,
+    "b1": False,
+    "b2": False,
+    "k1": True,
+    "k2": True,
+    "k3": True,
+    "k4": False,
+    "p1": True,
+    "p2": True,
+    "tiepoint_covariance": True,
+}
 
 
 def export_results(chunk: Metashape.Chunk, run_idx: int, out_dir: Path):
@@ -63,7 +62,7 @@ def export_results(chunk: Metashape.Chunk, run_idx: int, out_dir: Path):
         delimiter=",",
         columns="noxyzUVWuvw",
     )
-    logging.debug(f"Exported control points to {out_dir / (basename + '_GC.txt')}")
+    logger.debug(f"Exported control points to {out_dir / (basename + '_GC.txt')}")
 
     chunk.exportReference(
         str(out_dir / (basename + "_cams_c.txt")),
@@ -72,7 +71,7 @@ def export_results(chunk: Metashape.Chunk, run_idx: int, out_dir: Path):
         delimiter=",",
         columns="noxyzabcUVWDEFuvwdef",
     )
-    logging.debug(f"Exported cameras to {out_dir / (basename + '_cams_c.txt')}")
+    logger.debug(f"Exported cameras to {out_dir / (basename + '_cams_c.txt')}")
 
     # Export the cameras
     chunk.exportCameras(
@@ -80,14 +79,14 @@ def export_results(chunk: Metashape.Chunk, run_idx: int, out_dir: Path):
         format=Metashape.CamerasFormatXML,
         crs=crs,
     )  # , rotation_order=Metashape.RotationOrderXYZ)
-    logging.debug(f"Exported cameras to {out_dir / (basename + '_cams.xml')}")
+    logger.debug(f"Exported cameras to {out_dir / (basename + '_cams.xml')}")
 
     # Export the calibrations
     for sensorIDx, sensor in enumerate(chunk.sensors):
         sensor.calibration.save(
             str(out_dir / (basename + f"_cal{sensorIDx + 1:01d}.xml"))
         )
-    logging.debug(f"Exported calibrations to {out_dir / (basename + '_cal*.xml')}")
+    logger.debug(f"Exported calibrations to {out_dir / (basename + '_cal*.xml')}")
 
     # Export the sparse point cloud
     chunk.exportPoints(
@@ -99,7 +98,7 @@ def export_results(chunk: Metashape.Chunk, run_idx: int, out_dir: Path):
         crs=crs,
         shift=pts_offset,
     )
-    logging.debug(f"Exported sparse point cloud to {out_dir / (basename + '_pts.ply')}")
+    logger.debug(f"Exported sparse point cloud to {out_dir / (basename + '_pts.ply')}")
 
 
 def run_iteration(
@@ -128,15 +127,15 @@ def run_iteration(
 
     run_idx, runs_dir, out_dir, optimise_intrinsics = iterable
 
-    logging.info(f"Run {run_idx}/ {num_randomisations-1}...")
+    logger.info(f"Run iteration {run_idx}/ {num_randomisations-1}...")
 
-    # Make a hard copy
+    # Make a hard copy if the zero-error project
     run_dir = runs_dir / f"run_{run_idx:04d}"
     if run_dir.exists():
         shutil.rmtree(run_dir, ignore_errors=True)
-        logging.warning(f"Directory {run_dir} already exists. Overwriting...")
+        logger.debug(f"Directory {run_dir} already exists. Overwriting...")
     shutil.copytree(runs_dir / "run_ref", run_dir)
-    logging.info(f"Created directory {run_dir}.")
+    logger.info(f"Created directory {run_dir}.")
 
     # Read the zero-error chunk
     run_doc = Metashape.Document()
@@ -147,31 +146,45 @@ def run_iteration(
     # chunk = ms.duplicate_chunk(zero_error_chunk, f"simu_chunk_{run_idx:04d}")
 
     # Add noise to camera coordinates if they are used for georeferencing
-    logging.debug(f"Adding Gaussian noise to camera coordinates for run {run_idx}...")
+    logger.debug(f"Run {run_idx} - Adding Gaussian noise to camera coordinates...")
     mc_utils.add_cameras_gauss_noise(chunk)
+    logger.debug(f"Run {run_idx} - Ok.")
 
     # Add noise to the marker locations
-    logging.debug(f"Adding Gaussian noise to marker locations for run {run_idx}...")
+    logger.debug(f"Run {run_idx} - Adding Gaussian noise to marker locations...")
     mc_utils.add_markers_gauss_noise(chunk)
+    logger.debug(f"Run {run_idx} - Ok.")
 
     # Add noise to the observations
-    logging.debug(f"Adding Gaussian noise to observations for run {run_idx}...")
+    logger.debug(f"Run {run_idx} - Adding Gaussian noise to observations...")
     mc_utils.add_observations_gauss_noise(chunk)
+    logger.debug(f"Run {run_idx} - Ok.")
 
     # Run Bundle adjustment
-    logging.debug(f"Optimising cameras for run {run_idx}...")
-    ms.optimize_cameras(chunk, optimise_intrinsics)
-    logging.debug(f"Finished optimising cameras for run {run_idx}.")
+    logger.debug(f"Run {run_idx} - Optimising cameras...")
+    optim = {**default_intrinsics_optim, **optimise_intrinsics}
+    chunk.optimizeCameras(
+        fit_f=optim["f"],
+        fit_cx=optim["cx"],
+        fit_cy=optim["cy"],
+        fit_b1=optim["b1"],
+        fit_b2=optim["b2"],
+        fit_k1=optim["k1"],
+        fit_k2=optim["k2"],
+        fit_k3=optim["k3"],
+        fit_k4=optim["k4"],
+        fit_p1=optim["p1"],
+        fit_p2=optim["p2"],
+        tiepoint_covariance=optim["tiepoint_covariance"],
+    )
+    logger.debug(f"Run {run_idx} - Ok.")
 
     # Export the results
     try:
         export_results(chunk, run_idx, out_dir)
-        logging.debug(f"Exported results for run {run_idx}.")
+        logger.info(f"Run {run_idx} - Exported results.")
     except Exception as e:
-        logging.error(f"Error exporting results for run {run_idx}: {e}")
-
-    if not (out_dir / f"{run_idx:04d}_*.ply").exists():
-        logging.error(f"Error exporting results for run {run_idx}")
+        logger.error(f"Error exporting results for run {run_idx}: {e}")
 
     # export_thread = threading.Thread(
     #     target=export_results,
@@ -180,12 +193,13 @@ def run_iteration(
     # export_thread.start()
     # export_thread.join()
 
-    # Clean up
+    # Clean up the run directory
     del chunk
     del run_doc
     shutil.rmtree(run_dir, ignore_errors=True)
 
-    logging.info(f"Finished run {run_idx} / {num_randomisations-1}.")
+    logger.info(f"Finished run {run_idx} / {num_randomisations-1}.")
+
     return True
 
 
@@ -195,7 +209,7 @@ def initialise_simulation(
     optimise_intrinsics: Dict = default_intrinsics_optim,
     pts_offset: Metashape.Vector = Metashape.Vector([NaN, NaN, NaN]),
 ) -> None:
-    logging.info("Initializing...")
+    logger.info("Initializing...")
 
     # Initialisation
     ref_project_path = Path(project_path)
@@ -330,7 +344,13 @@ def initialise_simulation(
     doc.save(str(zero_error_path), [zero_error_chunk])
 
 
-def check_initialisation(simu_dir) -> bool:
+def check_initialisation(simu_dir: Path) -> bool:
+    if isinstance(simu_dir, str):
+        simu_dir = Path(simu_dir)
+    elif not isinstance(simu_dir, Path):
+        raise TypeError(f"simu_dir must be a string or Path, not {type(simu_dir)}")
+    runs_dir = simu_dir / "runs"
+    out_dir = simu_dir / "Monte_Carlo_output"
     if not simu_dir.exists():
         raise FileNotFoundError(
             f"Simulation directory {simu_dir} does not exist. Unable to resume simulation."
@@ -339,8 +359,6 @@ def check_initialisation(simu_dir) -> bool:
         raise FileNotFoundError(
             f"Simulation project file {simu_dir / 'simu.psx'} does not exist. Unable to resume simulation."
         )
-
-    runs_dir = simu_dir / "runs"
     if not (runs_dir / "run_ref").exists():
         raise FileNotFoundError(
             f"Simulation reference directory {simu_dir / 'run_ref'} does not exist. Unable to resume simulation."
@@ -349,8 +367,6 @@ def check_initialisation(simu_dir) -> bool:
         raise FileNotFoundError(
             f"Simulation reference project file {simu_dir / 'run_ref' / 'run.psx'} does not exist. Unable to resume simulation."
         )
-
-    out_dir = simu_dir / "Monte_Carlo_output"
     if not out_dir.exists():
         raise FileNotFoundError(
             f"Output directory {out_dir} does not exist. Unable to resume simulation."
@@ -363,7 +379,7 @@ def montecarlo_simulation(
     num_randomisations: int,
     simu_dir: Path = None,
     run_parallel: bool = False,
-    parallell_processes: int = 10,
+    workers: int = 10,
     resume_sumulations_from: int = -1,
     optimise_intrinsics: Dict = default_intrinsics_optim,
     pts_offset: Metashape.Vector = Metashape.Vector([NaN, NaN, NaN]),
@@ -378,7 +394,7 @@ def montecarlo_simulation(
         project_name (str): The name of the project on which the simulation will be conducted.
         num_randomisations (int): The number of randomisations to be performed in the simulation.
         run_parallel (bool, optional): Whether to run the simulation in parallel. Defaults to False.
-        parallell_processes (int, optional): The number of parallel processes to use if run_parallel is True. Defaults to 10.
+        workers (int, optional): The number of parallel processes to use if run_parallel is True. Defaults to 10.
         optimise_intrinsics (Dict, optional): The parameters for camera optimization. Defaults to default_intrinsics_optim.
         pts_offset (Metashape.Vector, optional): The offset for point coordinates. Defaults to Metashape.Vector([NaN, NaN, NaN]).
 
@@ -395,10 +411,11 @@ def montecarlo_simulation(
         )
 
     # Check the initialisation of the simulation
-    check_initialisation(simu_dir)
+    if not check_initialisation(simu_dir):
+        raise RuntimeError("Cannot resume simulation. Initialisation failed.")
     runs_dir = simu_dir / "runs"
     out_dir = simu_dir / "Monte_Carlo_output"
-    logging.info(
+    logger.info(
         f"Resuming Monte Carlo simulation from run {resume_sumulations_from}..."
     )
 
@@ -406,7 +423,7 @@ def montecarlo_simulation(
     if resume_sumulations_from < 0:
         resume_sumulations_from = 0
 
-    # create the iterable of the randomisations
+    # Create the iterable with the parameters of each run
     randomisation = range(resume_sumulations_from, num_randomisations)
     act_num_randomisations = num_randomisations - resume_sumulations_from
     iterable_parms = zip(
@@ -417,12 +434,19 @@ def montecarlo_simulation(
     )
 
     # Run the simulation
+    logger.info("Starting Monte Carlo simulation...")
     if run_parallel:
-        with Pool(parallell_processes) as pool:
+        with Pool(workers) as pool:
             result = pool.map(
                 run_iteration,
                 iterable_parms,
             )
+            logger.info("Succeded iterations:")
+            for value in result:
+                print("*", end=" ")
+                if not value:
+                    print("_", end=" ")
+            print("")
 
         # def callback(result_iterable):
         #     for result in result_iterable:
@@ -431,7 +455,7 @@ def montecarlo_simulation(
         # def error_callback(error):
         #     print(f"Got error: {error}")
 
-        # with Pool(parallell_processes) as pool:
+        # with Pool(workers) as pool:
         #     result = pool.starmap_async(
         #         run_iteration,
         #         items,
@@ -441,11 +465,13 @@ def montecarlo_simulation(
         #     )
         #     for value in result.get():
         #         if not value:
-        #             logging.error("Error in parallel processing")
+        #             logger.error("Error in parallel processing")
     else:
-        ret = list(map(run_iteration, iterable_parms))
+        result = list(map(run_iteration, iterable_parms))
 
-    logging.info("Finished")
+    logger.info("Simulation completed.")
+
+    return result
 
 
 if __name__ == "__main__":
@@ -458,9 +484,10 @@ if __name__ == "__main__":
     simu_dir = project_path.parent / f"simulation_{project_path.stem}"
 
     # Define how many times bundle adjustment (Metashape 'optimisation') will be carried out.
-    num_randomisations = 20
+    num_randomisations = 1000
     run_parallel = True
-    parallell_processes = 5
+    workers = 5
+    # NOTE: Keep the number of workers low if running on a single CPU as the Metashape bundle adjustment is already multi-threaded and will use all available cores. If this is set too high, it will slow down the simulation and some runs may stuck.
 
     # Resume the Monte Carlo simulation from a specific run number. Set to -1 to start a new simulation.
     resume_sumulations_from = -1
@@ -492,14 +519,14 @@ if __name__ == "__main__":
         num_randomisations=num_randomisations,
         simu_dir=simu_dir,
         run_parallel=run_parallel,
-        parallell_processes=parallell_processes,
+        workers=workers,
         resume_sumulations_from=resume_sumulations_from,
         optimise_intrinsics=optimise_intrinsics,
         pts_offset=pts_offset,
     )
 
     # Read and process the output files
-    # mc_results.main(
-    #     proj_dir=simu_dir,
-    #     pcd_ext="ply",
-    # )
+    mc_results.main(
+        proj_dir=simu_dir,
+        pcd_ext="ply",
+    )
