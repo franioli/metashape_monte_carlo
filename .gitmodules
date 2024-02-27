@@ -1,3 +1,6 @@
 [submodule "thirdparty/automate-metashape"]
 	path = thirdparty/automate-metashape
 	url = git@github.com:open-forest-observatory/automate-metashape.git
+[submodule "thirdparty/metashape-scripts"]
+	path = thirdparty/metashape-scripts
+	url = git@github.com:agisoft-llc/metashape-scripts.git

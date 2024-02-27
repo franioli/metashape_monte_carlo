@@ -81,22 +81,50 @@ def compute_observation_distances(chunk: Metashape.Chunk, dir_path: str) -> str:
     return fpath
 
 
-def set_chunk_zero_error(chunk: Metashape.Chunk):
-    # Get the chunk coordinate system
-    crs = chunk.crs
+def set_chunk_zero_error(
+    chunk: Metashape.Chunk,
+    optimize_cameras: bool = False,
+    otimize_params: dict = {},
+    inplace: bool = False,
+    new_chunk_label: str = None,
+):
+    # Make a copy of the chunk if not inplace
+    if not inplace:
+        chunk_ = chunk.copy()
 
-    # Set the marker locations be zero error, from which we add simulated error
-    for marker in chunk.markers:
-        if marker.position is not None:
+        # Set the chunk label
+        if new_chunk_label:
+            chunk_.label = new_chunk_label
+    else:
+        chunk_ = chunk
+
+    # Get the chunk_ coordinate system
+    crs = chunk_.crs
+
+    # Set the sensor estimated internal parameters to the reference
+    for sensor in chunk_.sensors:
+        if sensor.user_calib:
+            sensor.user_calib = sensor.calibration
+
+    # Set the marker locations be zero error, if the marker is enabled (GCPs)
+    for marker in chunk_.markers:
+        if marker.position is not None and marker.reference.enabled:
             marker.reference.location = crs.project(
-                chunk.transform.matrix.mulp(marker.position)
+                chunk_.transform.matrix.mulp(marker.position)
+            )
+
+    # Set the camera locations be zero error, if the camera has prior locations
+    for camera in chunk_.cameras:
+        if camera.transform and camera.reference.enabled:
+            camera.reference.location = crs.project(
+                chunk_.transform.matrix.mulp(camera.center)
             )
 
     # Set the marker and point projections to be zero error, from which we add simulated error
-    points = chunk.point_cloud.points
-    point_proj = chunk.point_cloud.projections
+    points = chunk_.point_cloud.points
+    point_proj = chunk_.point_cloud.projections
     npoints = len(points)
-    for camera in chunk.cameras:
+    for camera in chunk_.cameras:
         if not camera.transform:
             continue
 
@@ -112,24 +140,38 @@ def set_chunk_zero_error(chunk: Metashape.Chunk):
                 proj.coord = camera.project(points[point_index].coord)
 
         # Set the marker projections be zero error
-        for markerIDx, marker in enumerate(chunk.markers):
-            if (not marker.projections[camera]) or (
-                not chunk.markers[markerIDx].position
-            ):
+        for marker in chunk_.markers:
+            if (not marker.projections[camera]) or (not marker.position):
                 continue
-            marker.projections[camera].coord = camera.project(
-                chunk.markers[markerIDx].position
-            )
+            marker.projections[camera].coord = camera.project(marker.position)
+
+    if optimize_cameras:
+        chunk_.optimizeCameras(
+            fit_f=otimize_params.get("f", False),
+            fit_cx=otimize_params.get("cx", False),
+            fit_cy=otimize_params.get("cy", False),
+            fit_b1=otimize_params.get("b1", False),
+            fit_b2=otimize_params.get("b2", False),
+            fit_k1=otimize_params.get("k1", False),
+            fit_k2=otimize_params.get("k2", False),
+            fit_k3=otimize_params.get("k3", False),
+            fit_k4=otimize_params.get("k4", False),
+            fit_p1=otimize_params.get("p1", False),
+            fit_p2=otimize_params.get("p2", False),
+            tiepoint_covariance=otimize_params.get("tiepoint_covariance", False),
+        )
+
+    return chunk_
 
 
 def add_cameras_gauss_noise(chunk: Metashape.Chunk, sigma: float = None):
     for cam in chunk.cameras:
-        # Skip cameras without a reference data enabled
-        if not cam.reference.enabled:
-            continue
-
         # Skip cameras without a transform
         if not cam.transform:
+            continue
+
+        # Skip cameras without a reference data enabled
+        if not cam.reference.enabled:
             continue
 
         # If no sigma is provided for each camera, use the chunk's camera accuracy
@@ -164,14 +206,13 @@ def add_markers_gauss_noise(chunk: Metashape.Chunk, sigma: float = None):
 
 
 def add_observations_gauss_noise(chunk: Metashape.Chunk):
-    tie_proj_x_stdev = chunk.tiepoint_accuracy / math.sqrt(2)
-    tie_proj_y_stdev = chunk.tiepoint_accuracy / math.sqrt(2)
-    marker_proj_x_stdev = chunk.marker_projection_accuracy / math.sqrt(2)
-    marker_proj_y_stdev = chunk.marker_projection_accuracy / math.sqrt(2)
+    tie_proj_stdev = chunk.tiepoint_accuracy / math.sqrt(2)
+    marker_proj_stdev = chunk.marker_projection_accuracy / math.sqrt(2)
+
     point_proj = chunk.point_cloud.projections
 
     for camera in chunk.cameras:
-        # Skip cameras without a transform
+        # Skip cameras without estimated exterior orientation
         if not camera.transform:
             continue
 
@@ -180,8 +221,8 @@ def add_observations_gauss_noise(chunk: Metashape.Chunk):
         for proj in projections:
             noise = Metashape.Vector(
                 [
-                    random.gauss(0, tie_proj_x_stdev),
-                    random.gauss(0, tie_proj_y_stdev),
+                    random.gauss(0, tie_proj_stdev),
+                    random.gauss(0, tie_proj_stdev),
                 ]
             )
             proj.coord += noise
@@ -192,8 +233,8 @@ def add_observations_gauss_noise(chunk: Metashape.Chunk):
                 continue
             noise = Metashape.Vector(
                 [
-                    random.gauss(0, marker_proj_x_stdev),
-                    random.gauss(0, marker_proj_y_stdev),
+                    random.gauss(0, marker_proj_stdev),
+                    random.gauss(0, marker_proj_stdev),
                 ]
             )
             marker.projections[camera].coord += noise

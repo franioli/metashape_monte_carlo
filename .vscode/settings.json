@@ -1,5 +1,17 @@
 {
   "austin.mode": "Wall time",
   "python.analysis.typeCheckingMode": "off",
-  "python.analysis.autoImportCompletions": true
+  "python.analysis.autoImportCompletions": true,
+  "sqltools.connections": [
+    {
+      "previewLimit": 50,
+      "server": "10.78.3.122",
+      "port": 5432,
+      "askForPassword": true,
+      "driver": "PostgreSQL",
+      "name": "10.78.3.122",
+      "database": "belvedere",
+      "username": "francesco"
+    }
+  ]
 }

@@ -1,4 +1,5 @@
 import shutil
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List
 
@@ -513,7 +514,7 @@ def make_doming_plot(data: pd.DataFrame, fig_path: Path, print_stats: bool = Fal
             vmax=vmax,
         )
         legend_labels.append(group_labels[enabled])
-    cbar = plt.colorbar(scatter, label="Z Error", ax=axes[0])
+        cbar = plt.colorbar(scatter, label="Z Error", ax=axes[0])
     axes[0].set_xlabel("X")
     axes[0].set_ylabel("Y")
     axes[0].set_title("2D Scatter Plot of Control Points (CPs)")
@@ -575,17 +576,20 @@ def main(
 
     # Load the data and compute the mean and std with dask
     if use_dask:
+        logger.info("Computing mean and std with dask...")
         operations = [
             stack.mean(axis=0),
             stack.std(axis=0, ddof=cov_ddof),
         ]
-        logger.info("Computing mean and std with dask...")
         mean, std = dask.compute(*operations)
     else:
         # Load all the data into memory and compute the mean and std
         stack = np.array([load_pcd(path) for path in pcd_list])
         mean = np.mean(stack, axis=0)
         std = np.std(stack, axis=0, ddof=cov_ddof)
+
+    # Computer Root mee square of the stack
+    rms = rmse(stack, ref_pcd, axis=0)
 
     # Compute full covariance matrix for each point (note that all the pcd are loaded in memory at once here!)
     if compute_full_covariance:
@@ -647,13 +651,14 @@ def main(
     # Make a 2D precision plot
     scale_fct = 1e3
     clim_quantile = 0.95
-    clim = [
-        (
-            np.floor(np.quantile(std[:, i], 1 - clim_quantile) * scale_fct / 2) * 2,
-            np.ceil(np.quantile(std[:, i], clim_quantile) * scale_fct / 2) * 2,
-        )
-        for i in range(3)
-    ]
+    # clim = [
+    #     (
+    #         np.floor(np.quantile(std[:, i], 1 - clim_quantile) * scale_fct / 2) * 2,
+    #         np.ceil(np.quantile(std[:, i], clim_quantile) * scale_fct / 2) * 2,
+    #     )
+    #     for i in range(3)
+    # ]
+    clim = [None, None, None]  # [(0, 30) for _ in range(3)]
     make_precision_plot(
         mean[:, 0],
         mean[:, 1],
@@ -662,6 +667,18 @@ def main(
         std[:, 1],
         std[:, 2],
         proj_dir / "estimated_precision.png",
+        scale_fct=scale_fct,
+        clim=clim,
+        make_3D_plot=True,
+    )
+    make_precision_plot(
+        mean[:, 0],
+        mean[:, 1],
+        mean[:, 2],
+        rms[:, 0],
+        rms[:, 1],
+        rms[:, 2],
+        proj_dir / "estimated_precision_rms.png",
         scale_fct=scale_fct,
         clim=clim,
         make_3D_plot=True,
@@ -697,14 +714,40 @@ def main(
         **scalar_fields,
     )
 
-    # Do Ground Control Analysis
-    gc_files = sorted((proj_dir / "Monte_Carlo_output").glob("*_GC.txt"))
+    # Make 2D precision plot with point precision from MS
+    ms_ref = proj_dir / "sparse_pts_reference_cov.csv"
+    if ms_ref.exists():
+        data = np.genfromtxt(ms_ref, delimiter=",", skip_header=1)
 
-    # Make doming plot from ground control data for the first file
+        # Read coordinate offset used in MC simulations from disk
+        off = np.loadtxt(proj_dir / "_coordinate_local_origin.txt")
+
+        xyz = data[:, 1:4] - off
+        rgb = data[:, 4:7]
+        precision = data[:, 7:10]
+        covariances = data[:, 10:]
+        clim = [None, None, None]  # [(0, 30) for _ in range(3)]
+        make_precision_plot(
+            xyz[:, 0],
+            xyz[:, 1],
+            xyz[:, 2],
+            precision[:, 0],
+            precision[:, 1],
+            precision[:, 2],
+            proj_dir / "metashape_reference_precision.png",
+            scale_fct=scale_fct,
+            clim=clim,
+        )
+    else:
+        logger.info("No reference precision computed from metashape data found")
+
+    ### Do Ground Control Analysis
+
+    # Make doming plot from ground control data for the first and file
+    gc_files = sorted((proj_dir / "Monte_Carlo_output").glob("*_GC.txt"))
     file = gc_files[0]
     data = pd.read_csv(file, skiprows=1, header=0)
     fig_path = proj_dir / "doming_effect.png"
-
     make_doming_plot(data, fig_path, print_stats=False)
 
     # Compute summary statistics for all ground control files
@@ -726,39 +769,118 @@ def main(
     logger.info(f"Max Z error: {max_z_err.mean():.4f} m")
 
     # Read cameras data
+    def load_camera_file(file: Path):
+        data = pd.read_csv(file, delimiter=",", skiprows=1)
+        # Remove last row
+        data = data.iloc[:-1]
+        xyz = data.loc[:, ["X_est", "Y_est", "Z_est"]].values
+        if "Yaw_est" in data.columns:
+            angles = data.loc[:, ["Yaw_est", "Pitch_est", "Roll_est"]].values
+        elif "Omega_est" in data.columns:
+            angles = data.loc[:, ["Omega_est", "Phi_est", "Kappa_est"]].values
+        loc_prior = data.loc[:, ["X", "Y", "Z"]].values
+        return xyz, angles, loc_prior
 
-    # Make 2D precision plot with point precision from MS
-    ms_ref = proj_dir / "sparse_pts_reference_cov.csv"
-    if ms_ref.exists():
-        data = np.genfromtxt(ms_ref, delimiter=",", skip_header=1)
+    logger.info("Loading estimated camera exterior orientation...")
+    cam_files = sorted((proj_dir / "Monte_Carlo_output").glob("*_cams_c.txt"))
+    # file = cam_files[0]
+    coords, angles = {}, {}
+    for file in cam_files:
+        run = file.stem.split("_")[0]
+        coords[run], angles[run], _ = load_camera_file(file)
+    logger.info("Done")
 
-        # Read coordinate offset used in MC simulations from disk
-        off = np.loadtxt(proj_dir / "_coordinate_local_origin.txt")
+    # Compute statistics for the camera exterior orientation
+    a = np.stack(list(coords.values()), axis=2)
+    b = np.stack(list(angles.values()), axis=2)
+    data = np.concatenate([a, b], axis=1)
+    cam_std = np.std(data, axis=2, ddof=cov_ddof)
 
-        xyz = data[:, 1:4] - off
-        rgb = data[:, 4:7]
-        precision = data[:, 7:10]
-        covariances = data[:, 10:]
-        clim = [(0, 30) for _ in range(3)]
-        make_precision_plot(
-            xyz[:, 0],
-            xyz[:, 1],
-            xyz[:, 2],
-            precision[:, 0],
-            precision[:, 1],
-            precision[:, 2],
-            proj_dir / "metashape_reference_precision.png",
-            scale_fct=scale_fct,
-            clim=clim,
-        )
-    else:
-        logger.info("No reference precision computed from metashape data found")
+    fig, axes = plt.subplots(3, 2, figsize=(10, 10))
+    # Plot standard hist and KDE deviation of coordinates
+    vct = cam_std[:, :3]
+    axes[0, 0] = sns.histplot(vct, ax=axes[0, 0], stat="density", legend=True)
+    axes[0, 0].set_xlabel("Coordinate [m]")
+    axes[0, 0].set_ylabel("Density")
+    axes[0, 0].grid(True)
+    axes[0, 0].set_title("Histogram of Coordinates")
+    axes[1, 0] = sns.kdeplot(data=vct, fill=True, ax=axes[1, 0], legend=True)
+    axes[1, 0].set_xlabel("Coordinate [m]")
+    axes[1, 0].set_ylabel("Density")
+    axes[1, 0].grid(True)
+    axes[1, 0].set_title("KDE of Coordinates")
+    axes[2, 0] = sns.boxplot(data=std[:, :3], ax=axes[2, 0])
+    axes[2, 0].set_xlabel("Axis")
+    axes[2, 0].set_ylabel("Standard Deviation [m]")
+    axes[2, 0].grid(True)
+    axes[2, 0].set_title("Boxplot of Coordinates")
+    # Plot standard deviation hist and KDE of angles
+    vct = cam_std[:, 3:]
+    axes[0, 1] = sns.histplot(vct, stat="density", ax=axes[0, 1], legend=True)
+    axes[0, 1].set_xlabel("Angles [deg]")
+    axes[0, 1].set_ylabel("Density")
+    axes[0, 1].grid(True)
+    axes[0, 1].set_title("Histogram of Angles")
+    axes[1, 1] = sns.kdeplot(vct, fill=True, ax=axes[1, 1], legend=True)
+    axes[1, 1].set_xlabel("Angles [deg]")
+    axes[1, 1].set_ylabel("Density")
+    axes[1, 1].grid(True)
+    axes[1, 1].set_title("KDE of Angles")
+    axes[2, 1] = sns.boxplot(data=std[:, 3:], ax=axes[2, 1])
+    axes[2, 1].set_xlabel("Axis")
+    axes[2, 1].set_ylabel("Standard Deviation [m]")
+    axes[2, 1].grid(True)
+    axes[1, 1].set_title("Boxplot of Angles")
+    # Set titles
+    plt.tight_layout()
+    fig.savefig(proj_dir / "camera_stats.png", dpi=300)
+
+    # Load camera interior orientation
+    # NOTE: only works with single camera projects for now
+    def read_cameraio_file(file: Path):
+        # Parse the XML
+        tree = ET.parse(file)
+        root = tree.getroot()
+
+        # Extract calibration parameters
+        width = int(root.find("width").text)
+        height = int(root.find("height").text)
+        f = float(root.find("f").text)
+        cx = float(root.find("cx").text)
+        cy = float(root.find("cy").text)
+        k1 = float(root.find("k1").text)
+        k2 = float(root.find("k2").text)
+        k3 = float(root.find("k3").text)
+        p1 = float(root.find("p1").text)
+        p2 = float(root.find("p2").text)
+
+        # Build camera matrix
+        # camera_matrix = np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]])
+
+        # Build distortion parameters vector
+        # dist_params = np.array([k1, k2, p1, p2, k3])
+
+        camera_params = [width, height, f, cx, cy, k1, k2, k3, p1, p2]
+
+        return camera_params
+
+    logger.info("Loading estimated camera interior orientation...")
+    cam_io_files = sorted((proj_dir / "Monte_Carlo_output").glob("*_cal1.xml"))
+    # file = cam_io_files[0]
+    camera_params = {}
+    for file in cam_io_files:
+        run = file.stem.split("_")[0]
+        camera_params[run] = read_cameraio_file(file)
+    logger.info("Done")
+
+    # Compute statistics for the camera interior orientation
+    data = np.array(list(camera_params.values()))
 
     logger.info("Done")
 
 
 if __name__ == "__main__":
-    proj_dir = Path("data/rossia/simulation_rossia_4gcp")
+    proj_dir = Path("data/rossia/simulation_rossia_relative")
     pcd_ext = "ply"
     compute_full_covariance = True
     use_dask = False
