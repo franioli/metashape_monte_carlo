@@ -477,7 +477,7 @@ def montecarlo_simulation(
 if __name__ == "__main__":
     # Directory where output will be stored and active control file is saved.
     # The files will be generated in a sub-folder named "Monte_Carlo_output"
-    project_path = "data/rossia/rossia_relative.psx"
+    project_path = "data/rossia_gcp/rossia_gcp_aat.psx"
 
     project_path = Path(project_path)
     simu_dir = project_path.parent / f"simulation_{project_path.stem}"

@@ -15,12 +15,12 @@ import plotly.io as pio
 import seaborn as sns
 from matplotlib import pyplot as plt
 
-from logger import get_logger
+from logger import setup_logger
 from thirdparty import transformations as tf
 
 matplotlib.use("agg")
 
-logger = get_logger("MC")
+logger = setup_logger(name="MC", log_level="INFO")
 
 
 def load_pcd(pcd_path: Path) -> np.ndarray:
@@ -271,7 +271,7 @@ def make_3D_scatter_plot(
     out_path: Path = "3D_scatter_plot.html",
     title: str = "3D Scatter Plot",
     colorbar: bool = False,
-    colorbar_label: str = "Color Bar Label",
+    colorbar_label: str = "Colorbar Label",
     colorbar_limits: List = None,
 ):
     """
@@ -319,6 +319,10 @@ def make_3D_scatter_plot(
             xaxis=dict(title="X"),
             yaxis=dict(title="Y"),
             zaxis=dict(title="Z"),
+            aspectmode="data",  # Set aspect ratio mode to 'data'
+            aspectratio=dict(
+                x=1, y=1, z=1
+            ),  # Set aspect ratio to be equal in all directions
         ),
     )
 
@@ -357,6 +361,13 @@ def make_precision_plot(
         scale_fct (int, optional): The factor by which the standard deviation values are scaled for coloring. Defaults to 1000.
     """
 
+    scalefct_units = {
+        1: "m",
+        1e2: "cm",
+        1e3: "mm",
+        1e6: "um",
+    }
+
     if clim is not None:
         # TODO: manage better the colorbar limits!
         if len(clim) != 1:
@@ -375,7 +386,7 @@ def make_precision_plot(
             markersize=point_size,
             colorbar=True,
             cmap="viridis",
-            title=f"Precision {title} [mm]",
+            title=f"Precision {title} [{scalefct_units[scale_fct]}]",
             colorbar_label="Standard Deviation",
             colorbar_limits=lim,
         )
@@ -393,7 +404,7 @@ def make_precision_plot(
             out_path=out_path.parent / (out_path.stem + ".html"),
             title="3D Scatter Plot",
             colorbar=True,
-            colorbar_label="Standard Deviation",
+            colorbar_label="3D Standard Deviation",
             colorbar_limits=clim,
         )
 
@@ -555,6 +566,8 @@ def main(
     compute_full_covariance: bool = True,
     cov_ddof: int = 1,
 ):
+    logger.info("Reading Monte Carlo outputs...")
+
     # Get pcd list
     pcd_dir = proj_dir / "Monte_Carlo_output"
     pcd_list = sorted(list(pcd_dir.glob(f"*.{pcd_ext}")))
@@ -575,8 +588,8 @@ def main(
     stack = lazy_load_pcd_stack(pcd_list)
 
     # Load the data and compute the mean and std with dask
+    logger.info("Computing mean and std and rmse of each point...")
     if use_dask:
-        logger.info("Computing mean and std with dask...")
         operations = [
             stack.mean(axis=0),
             stack.std(axis=0, ddof=cov_ddof),
@@ -593,6 +606,7 @@ def main(
 
     # Compute full covariance matrix for each point (note that all the pcd are loaded in memory at once here!)
     if compute_full_covariance:
+        logger.info("Computing covariance of each point..")
         skip_cov = False
         try:
 
@@ -613,6 +627,7 @@ def main(
     mean += offset
 
     # Estimate a Helmert transformation between the mean pcd and the ref.
+    logger.info("Estimating Helmert transformation...")
     T = tf.affine_matrix_from_points(
         mean.T, ref_pcd.T, shear=False, scale=True, usesvd=True
     )
@@ -629,18 +644,19 @@ def main(
     if not skip_cov:
         # Rotate covariance matrix and compute new standard deviation
         R = T[:3, :3]
-        cov_roto = np.array([R @ cov @ R.T for cov in np_cov])
-        std_roto = np.sqrt(np.array([np.diag(cov) for cov in cov_roto]))
+        cov = np.array([R @ cov @ R.T for cov in np_cov])
+        std = np.sqrt(np.array([np.diag(c) for c in cov]))
 
-    # Compute statistics
+    # Compute statistics for the mean and the rototranslated points
+    logger.info("Computing statistics...")
+    logger.info("Statistics for mean pointcloud:")
     compute_statistics(
         estimated=mean,
         reference=ref_pcd,
         make_plot=True,
         figure_path=proj_dir / "difference_stats.png",
     )
-
-    # Compute statistics for the rototranslated points
+    logger.info("Sta")
     compute_statistics(
         estimated=points_roto,
         reference=ref_pcd,
@@ -649,8 +665,9 @@ def main(
     )
 
     # Make a 2D precision plot
+    logger.info("Making precision plots...")
     scale_fct = 1e3
-    clim_quantile = 0.95
+    # clim_quantile = 0.95
     # clim = [
     #     (
     #         np.floor(np.quantile(std[:, i], 1 - clim_quantile) * scale_fct / 2) * 2,
@@ -658,7 +675,7 @@ def main(
     #     )
     #     for i in range(3)
     # ]
-    clim = [None, None, None]  # [(0, 30) for _ in range(3)]
+    clim = [(0, 30), (0, 30), (0, 100)]
     make_precision_plot(
         mean[:, 0],
         mean[:, 1],
@@ -669,7 +686,7 @@ def main(
         proj_dir / "estimated_precision.png",
         scale_fct=scale_fct,
         clim=clim,
-        make_3D_plot=True,
+        make_3D_plot=False,
     )
     make_precision_plot(
         mean[:, 0],
@@ -684,37 +701,8 @@ def main(
         make_3D_plot=True,
     )
 
-    # Create a las pcd with laspy
-    rgb = np.uint16(np.asarray(o3d.io.read_point_cloud(str(ref_pcd_path)).colors) * 255)
-    scalar_fields = {
-        "sx": std[:, 0],
-        "sy": std[:, 1],
-        "sz": std[:, 2],
-    }
-    write_pcd_las(
-        proj_dir / "point_precision.las",
-        mean[:, 0],
-        mean[:, 1],
-        mean[:, 2],
-        rgb=rgb,
-        **scalar_fields,
-    )
-
-    scalar_fields = {
-        "sx": std_roto[:, 0],
-        "sy": std_roto[:, 1],
-        "sz": std_roto[:, 2],
-    }
-    write_pcd_las(
-        proj_dir / "point_precision_helmert.las",
-        points_roto[:, 0],
-        points_roto[:, 1],
-        points_roto[:, 2],
-        rgb=rgb,
-        **scalar_fields,
-    )
-
     # Make 2D precision plot with point precision from MS
+    logger.info("Reading precision from metashape data...")
     ms_ref = proj_dir / "sparse_pts_reference_cov.csv"
     if ms_ref.exists():
         data = np.genfromtxt(ms_ref, delimiter=",", skip_header=1)
@@ -726,7 +714,6 @@ def main(
         rgb = data[:, 4:7]
         precision = data[:, 7:10]
         covariances = data[:, 10:]
-        clim = [None, None, None]  # [(0, 30) for _ in range(3)]
         make_precision_plot(
             xyz[:, 0],
             xyz[:, 1],
@@ -741,9 +728,35 @@ def main(
     else:
         logger.info("No reference precision computed from metashape data found")
 
+    # Create a las pcd with laspy
+    logger.info("Writing pointclouds with point precision to LAS files...")
+    rgb = np.uint16(np.asarray(o3d.io.read_point_cloud(str(ref_pcd_path)).colors) * 255)
+    scalar_fields = {
+        "sx": std[:, 0],
+        "sy": std[:, 1],
+        "sz": std[:, 2],
+    }
+    write_pcd_las(
+        proj_dir / "point_precision.las",
+        mean[:, 0],
+        mean[:, 1],
+        mean[:, 2],
+        rgb=rgb,
+        **scalar_fields,
+    )
+    write_pcd_las(
+        proj_dir / "point_precision_helmert.las",
+        points_roto[:, 0],
+        points_roto[:, 1],
+        points_roto[:, 2],
+        rgb=rgb,
+        **scalar_fields,
+    )
+
     ### Do Ground Control Analysis
 
     # Make doming plot from ground control data for the first and file
+    logger.info("Reading ground control data for doming analysis...")
     gc_files = sorted((proj_dir / "Monte_Carlo_output").glob("*_GC.txt"))
     file = gc_files[0]
     data = pd.read_csv(file, skiprows=1, header=0)
@@ -880,7 +893,8 @@ def main(
 
 
 if __name__ == "__main__":
-    proj_dir = Path("data/rossia/simulation_rossia_relative")
+    # proj_dir = Path("data/rossia/simulation_rossia_relative")
+    proj_dir = Path("data/rossia_gcp/simulation_rossia_gcp_aat")
     pcd_ext = "ply"
     compute_full_covariance = True
     use_dask = False

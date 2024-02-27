@@ -1,5 +1,6 @@
 # UserDefined
 ms_venv/
+ms_venv*/
 test_projects/
 *.psx
 *.files
