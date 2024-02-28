@@ -4,11 +4,37 @@ import os
 import random
 
 import Metashape
+import numpy as np
 
 from src.utils import backward_compatibility
 
-# # Reset the random seed, so that all equivalent runs of this script are started identically
+# Reset the random seed, so that all equivalent runs of this script are started identically
 # random.seed(1)
+
+
+rng = np.random.default_rng()
+
+
+def vector_to_cov(cov_vector):
+    if len(cov_vector) != 6:
+        raise ValueError(
+            "Input vector must contain 6 elements: [Var(X), Var(Y), Var(Z), Cov(X,Y), Cov(X,Z), Cov(Y,Z)]"
+        )
+
+    var_x, var_y, var_z = cov_vector[:3]
+    cov_xy, cov_xz, cov_yz = cov_vector[3:]
+
+    if var_x < 0 or var_y < 0 or var_z < 0:
+        raise ValueError("Variances must be non-negative.")
+
+    cov_matrix = np.array(
+        [
+            [var_x, cov_xy, cov_xz],
+            [cov_xy, var_y, cov_yz],
+            [cov_xz, cov_yz, var_z],
+        ]
+    )
+    return cov_matrix
 
 
 def get_ms_tie_points(chunk: Metashape.Chunk):
@@ -19,7 +45,24 @@ def get_ms_tie_points(chunk: Metashape.Chunk):
         return chunk.point_cloud
 
 
-def compute_coordinate_offset(chunk: Metashape.Chunk):
+def compute_coordinate_offset(chunk: Metashape.Chunk) -> Metashape.Vector:
+    """
+    Compute the coordinate offset for a given Metashape chunk.
+
+    Parameters:
+        chunk (Metashape.Chunk): The Metashape chunk for which to compute the coordinate offset.
+
+    Returns:
+        Metashape.Vector: The computed coordinate offset as a Metashape Vector.
+
+    Raises:
+        ValueError: If the chunk coordinate system is not set.
+
+    Notes:
+        - The coordinate offset is computed by averaging the coordinates of all valid tie points in the chunk.
+        - If the chunk coordinate system is not set, a ValueError is raised.
+
+    """
     crs = chunk.crs
     if crs is None:
         raise ValueError("Chunk coordinate system is not set")
@@ -43,6 +86,13 @@ def compute_observation_distances(chunk: Metashape.Chunk, dir_path: str) -> str:
     """
     Export a text file of observation distances and ground dimensions of pixels from which relative precisions can be calculated. The File will have one row for each observation, and three columns:
         cameraID	  ground pixel dimension (m)   observation distance (m)
+
+    Parameters:
+        chunk (Metashape.Chunk): The chunk containing the tie points and cameras.
+        dir_path (str): The directory path where the text file will be saved.
+
+    Returns:
+        str: The file path of the exported text file.
 
     """
 
@@ -100,6 +150,23 @@ def set_chunk_zero_error(
     inplace: bool = False,
     new_chunk_label: str = None,
 ):
+    """
+    Set the chunk's error to zero by adjusting marker and camera locations.
+
+    Parameters:
+        chunk (Metashape.Chunk): The chunk to modify.
+        optimize_cameras (bool, optional): Whether to optimize camera parameters after setting error to zero. Defaults to False.
+        otimize_params (dict, optional): Optimization parameters for camera optimization. Defaults to {}.
+        inplace (bool, optional): Whether to modify the chunk in place or create a copy. Defaults to False.
+        new_chunk_label (str, optional): The label for the new chunk if not modifying in place. Defaults to None.
+
+    Returns:
+        Metashape.Chunk: The modified chunk with error set to zero.
+
+    Note:
+        This function assumes that the chunk has tie points and projections available.
+
+    """
     # Make a copy of the chunk if not inplace
     if not inplace:
         chunk_ = chunk.copy()
@@ -178,6 +245,26 @@ def set_chunk_zero_error(
 
 
 def add_cameras_gauss_noise(chunk: Metashape.Chunk, sigma: float = None):
+    """
+    Add Gaussian noise to the location of cameras in a Metashape chunk.
+
+    Parameters:
+        chunk (Metashape.Chunk): The chunk containing the cameras.
+        sigma (float, optional): The standard deviation of the Gaussian noise. If not provided, the camera accuracy from the chunk or the camera's reference data will be used.
+
+    Returns:
+        None
+
+    Notes:
+        - Cameras without a transform or without reference data enabled will be skipped.
+        - The noise vector is computed using random.gauss(0, sigma) for each dimension of the camera location.
+        - The computed noise vector is added to the camera location.
+
+    Example:
+        >>> chunk = Metashape.app.document.chunk
+        >>> add_cameras_gauss_noise(chunk, sigma=0.1)
+    """
+
     for cam in chunk.cameras:
         # Skip cameras without a transform
         if not cam.transform:
@@ -201,27 +288,118 @@ def add_cameras_gauss_noise(chunk: Metashape.Chunk, sigma: float = None):
         cam.reference.location += noise
 
 
-def add_markers_gauss_noise(chunk: Metashape.Chunk, sigma: float = None):
-    for marker in chunk.markers:
+def add_markers_gauss_noise(
+    chunk: Metashape.Chunk,
+    sigma: float = None,
+    cov: dict = None,
+):
+    """
+    Add Gaussian noise to the locations of active markers in a Metashape chunk.
+
+    Parameters:
+        chunk (Metashape.Chunk): The chunk containing the markers.
+        sigma (float, optional): The standard deviation of the Gaussian noise. If a scalar value is provided, the same standard deviation is used for all three dimensions. If a 3-element vector is provided, each dimension can have a different standard deviation. Defaults to None.
+        cov (dict, optional): A dictionary containing the covariance matrix for each marker. The keys of the dictionary must be the marker labels, and the values must be either a 3x3 covariance matrix or a 6-element vector containing the variances and covariances. Defaults to None.
+
+    Raises:
+        ValueError: If sigma is not a scalar or a 3-element vector, or if cov is not a dictionary, or if the covariance matrix for a marker is not provided or is not a valid shape.
+
+    Returns:
+        None
+
+    Note:
+        - If both sigma and cov are None, the noise vector for each marker is computed using the chunk's marker accuracy.
+        - The noise is added to the location of each active marker in the chunk.
+        - Check points are not affected by the noise.
+
+    Example usage:
+        >>> chunk = Metashape.app.document.chunk
+        >>> sigma = 0.1
+        >>> cov = {"Marker1": np.eye(3), "Marker2": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]}
+        >>> add_markers_gauss_noise(chunk, sigma, cov)
+    """
+    num_active_markers = len(
+        [marker for marker in chunk.markers if marker.reference.enabled]
+    )
+
+    if sigma is not None:
+        if isinstance(sigma, (int, float)):
+            sigma = [sigma, sigma, sigma]
+        elif len(sigma) != 3:
+            raise ValueError("Sigma must be a scalar or a 3-element vector.")
+        noise = rng.normal(loc=0, scale=sigma, size=(num_active_markers, 3))
+
+    if cov is not None:
+        if not isinstance(cov, dict):
+            raise ValueError(
+                "Covariance must be a dictionary containing the covariance matrix for each marker. The keys must be the marker label and the values must be a 3x3 matrix or a 6-element vector."
+            )
+        noise = []
+        marker_labels = [
+            marker.label for marker in chunk.markers if marker.reference.enabled
+        ]
+        for label in marker_labels:
+            if label not in cov:
+                raise ValueError(f"No covariance matrix provided for marker {label}")
+            else:
+                cov_mat = cov[label]
+                if cov_mat.shape == (6,):
+                    cov_mat = vector_to_cov(cov)
+                elif cov_mat.shape != (3, 3):
+                    raise ValueError(
+                        "Covariance matrix must be 3x3 or a 6-element vector containing the threw variances and three covariances."
+                    )
+                noise.append(rng.multivariate_normal(mean=np.zeros(3), cov=cov_mat))
+
+        noise = np.array(noise)
+
+    for i, marker in enumerate(chunk.markers):
         # Do not add noise to check points
         if not marker.reference.enabled:
             continue
 
-        # If no sigma is provided for each camera, use the chunk's marker accuracy
-        if not sigma:
+        # If no sigma or covariance matrix is provided for each camera, use the chunk's marker accuracy
+        if sigma is None and cov is None:
+            # If no sigma is provided for each marker, use the chunk's marker accuracy
             if not marker.reference.accuracy:
                 sigma = chunk.marker_location_accuracy
             else:
                 sigma = marker.reference.accuracy
 
-        noise = Metashape.Vector([random.gauss(0, s) for s in sigma])
+            # Compute the noise vector for this marker
+            noise = Metashape.Vector([random.gauss(0, s) for s in sigma])
+        else:
+            # Use the precomputed noise vector
+            noise = Metashape.Vector(noise[i])
+
         marker.reference.location += noise
 
 
 def add_observations_gauss_noise(chunk: Metashape.Chunk):
+    """
+    Add Gaussian noise to the observations in a Metashape chunk.
+
+    Parameters:
+        chunk (Metashape.Chunk): The chunk containing the observations.
+
+    Returns:
+        None
+
+    Raises:
+        None
+
+    Notes:
+        - This function adds Gaussian noise to the tie point projections and marker projections in a Metashape chunk.
+        - The standard deviation of the noise is calculated based on the tie point accuracy and marker projection accuracy of the chunk.
+        - The noise is generated using numpy's random number generator for faster computation.
+
+    Example:
+        add_observations_gauss_noise(chunk)
+    """
     tie_proj_stdev = chunk.tiepoint_accuracy / math.sqrt(2)
     marker_proj_stdev = chunk.marker_projection_accuracy / math.sqrt(2)
 
+    # Get tie points (projections of 3D points on images) for all images
     tie_points = get_ms_tie_points(chunk)
     point_proj = tie_points.projections
 
@@ -230,16 +408,21 @@ def add_observations_gauss_noise(chunk: Metashape.Chunk):
         if not camera.transform:
             continue
 
-        # Tie points (matches)
+        # Get the projections for the current image
         projections = point_proj[camera]
-        for proj in projections:
-            noise = Metashape.Vector(
-                [
-                    random.gauss(0, tie_proj_stdev),
-                    random.gauss(0, tie_proj_stdev),
-                ]
-            )
-            proj.coord += noise
+        n_points = len(projections)
+
+        # Generate noise for all the projections using numpy (faster)
+        noise = rng.normal(0, tie_proj_stdev, (n_points, 2))
+
+        # Add noise to the projections
+        for proj, n in zip(projections, noise):
+            # n = [
+            #     random.gauss(0, tie_proj_stdev),
+            #     random.gauss(0, tie_proj_stdev),
+            # ]
+            n = Metashape.Vector(n)
+            proj.coord += n
 
         # Markers
         for marker in chunk.markers:

@@ -3,9 +3,10 @@ import math
 import shutil
 from multiprocessing import Pool
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Union
 
 import Metashape
+import numpy as np
 
 from logger import setup_logger
 from src import mc_utils
@@ -433,7 +434,7 @@ def montecarlo_simulation(
     workers: int = 10,
     resume_sumulations_from: int = -1,
     optimise_intrinsics: Dict = default_intrinsics_optim,
-    pts_offset: Metashape.Vector = Metashape.Vector([NaN, NaN, NaN]),
+    pts_offset: Union[List, np.ndarray, Metashape.Vector] = [NaN, NaN, NaN],
 ):
     """
     Conducts a Monte Carlo simulation on a given project.
@@ -452,6 +453,14 @@ def montecarlo_simulation(
     Returns:
         None
     """
+    project_path = Path(project_path)
+    if not project_path.exists():
+        raise FileNotFoundError(f"File {project_path} does not exist.")
+    if not project_path.suffix == ".psx":
+        raise ValueError(f"File {project_path} is not a Metashape project file.")
+    if not isinstance(pts_offset, Metashape.Vector):
+        pts_offset = Metashape.Vector(pts_offset)
+
     # If the resume_sumulations_from counter is negative, initialise the simulation. If it is positive, skip it and resume the simulation from the specified run number.
     if resume_sumulations_from < 0:
         initialise_simulation(
@@ -508,7 +517,7 @@ if __name__ == "__main__":
     # Directory where output will be stored and active control file is saved.
     # The files will be generated in a sub-folder named "Monte_Carlo_output"
     ref_project_path = "data/rossia/rossia_gcp_aat.psx"
-    simu_name = "simulation_rossia_gcp_aat"
+    simu_name = "simulation_rossia_gcp_aat_test"
 
     # Define how many times bundle adjustment (Metashape 'optimisation') will be carried out.
     num_randomisations = 2000
@@ -542,7 +551,6 @@ if __name__ == "__main__":
 
     ref_project_path = Path(ref_project_path)
     simu_dir = ref_project_path.parent / simu_name
-    offset = Metashape.Vector(pts_offset)
 
     # Run the Monte Carlo simulation
     montecarlo_simulation(
