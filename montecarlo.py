@@ -316,29 +316,8 @@ def run_iteration(
     ## Old method by copying the reference chunk
     # ref_doc = Metashape.Document()
     # ref_doc.open(str(runs_dir / "run_ref/run.psz"))
-
     # chunk = ref_doc.chunks[0].copy()
     # chunk.label = f"simu_chunk_{run_idx:04d}"
-    # tie_proj_stdev = chunk.tiepoint_accuracy / math.sqrt(2)
-    # Use numpy to sample from a normal distribution and add noise to the projections
-    # import numpy as np
-    # rng = np.random.default_rng()
-    # for camera in chunk.cameras:
-
-    #     projections = chunk.point_cloud.projections[camera]
-
-    #     n_points = len(projections)
-    #     noise = rng.normal(0, tie_proj_stdev, (n_points, 2))
-
-    #     for matchIdx in range(n_points):
-
-    #         proj = projections[matchIdx]
-    #         proj.coord += Metashape.Vector(noise[matchIdx, :])
-
-    # # print the first point projection
-    # proj = chunk.point_cloud.projections[chunk.cameras[0]]
-    # print(proj[0].coord)
-
     # ref_doc.delete(chunk)
     # ref_doc.save()
 
