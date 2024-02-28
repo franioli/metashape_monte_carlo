@@ -232,7 +232,7 @@ def run_iteration(
 
     cleanup_run = True
 
-    run_idx, simu_dir, optimise_intrinsics = iterable
+    run_idx, simu_dir, optimise_intrinsics, pts_offset = iterable
 
     logger.info(f"Run iteration {run_idx}/ {num_randomisations-1}...")
 
@@ -296,7 +296,7 @@ def run_iteration(
 
     # Export the results
     try:
-        export_results(chunk, run_idx, out_dir)
+        export_results(chunk, run_idx, out_dir, pts_offset)
         logger.info(f"Run {run_idx} - Exported results.")
     except Exception as e:
         logger.error(f"Error exporting results for run {run_idx}: {e}")
@@ -324,7 +324,12 @@ def run_iteration(
     return True
 
 
-def export_results(chunk: Metashape.Chunk, run_idx: int, out_dir: Path):
+def export_results(
+    chunk: Metashape.Chunk,
+    run_idx: int,
+    out_dir: Path,
+    pts_offset: Metashape.Vector = Metashape.Vector([NaN, NaN, NaN]),
+):
     """
     Exports the results of a processing chunk in various formats.
 
@@ -467,6 +472,7 @@ def montecarlo_simulation(
         randomisation,
         [simu_dir] * act_num_randomisations,
         [optimise_intrinsics] * act_num_randomisations,
+        [pts_offset] * act_num_randomisations,
     )
 
     # Run the simulation
@@ -495,12 +501,14 @@ def montecarlo_simulation(
 if __name__ == "__main__":
     # Directory where output will be stored and active control file is saved.
     # The files will be generated in a sub-folder named "Monte_Carlo_output"
-    ref_project_path = "data/rossia/rossia_gcp_aat.psx"
-    simu_name = "simulation_rossia_gcp_aat_test"
+    # ref_project_path = "data/rossia/rossia_gcp_aat.psx"
+    # simu_name = "simulation_rossia_gcp_aat"
+    ref_project_path = "data/square/enrich_square_GT.psx"
+    simu_name = "simulation_enrich_square"
 
     # Define how many times bundle adjustment (Metashape 'optimisation') will be carried out.
-    num_randomisations = 2000
-    run_parallel = False
+    num_randomisations = 100
+    run_parallel = True
     workers = 5
     # NOTE: Keep the number of workers low if are running on a single CPU as the Metashape bundle adjustment is already multi-threaded and will use all available cores. If this is set too high, it will slow down the simulation and some runs may stuck.
 

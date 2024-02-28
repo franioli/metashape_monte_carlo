@@ -290,7 +290,7 @@ def add_cameras_gauss_noise(chunk: Metashape.Chunk, sigma: float = None):
 
 def add_markers_gauss_noise(
     chunk: Metashape.Chunk,
-    sigma: float = None,
+    std: float = None,
     cov: dict = None,
 ):
     """
@@ -298,7 +298,7 @@ def add_markers_gauss_noise(
 
     Parameters:
         chunk (Metashape.Chunk): The chunk containing the markers.
-        sigma (float, optional): The standard deviation of the Gaussian noise. If a scalar value is provided, the same standard deviation is used for all three dimensions. If a 3-element vector is provided, each dimension can have a different standard deviation. Defaults to None.
+        std (float, optional): The standard deviation of the Gaussian noise. If a scalar value is provided, the same standard deviation is used for all three dimensions. If a 3-element vector is provided, each dimension can have a different standard deviation. Defaults to None.
         cov (dict, optional): A dictionary containing the covariance matrix for each marker. The keys of the dictionary must be the marker labels, and the values must be either a 3x3 covariance matrix or a 6-element vector containing the variances and covariances. Defaults to None.
 
     Raises:
@@ -322,12 +322,12 @@ def add_markers_gauss_noise(
         [marker for marker in chunk.markers if marker.reference.enabled]
     )
 
-    if sigma is not None:
-        if isinstance(sigma, (int, float)):
-            sigma = [sigma, sigma, sigma]
-        elif len(sigma) != 3:
+    if std is not None:
+        if isinstance(std, (int, float)):
+            std = [std, std, std]
+        elif len(std) != 3:
             raise ValueError("Sigma must be a scalar or a 3-element vector.")
-        noise = rng.normal(loc=0, scale=sigma, size=(num_active_markers, 3))
+        noise = rng.normal(loc=0, scale=std, size=(num_active_markers, 3))
 
     if cov is not None:
         if not isinstance(cov, dict):
@@ -359,7 +359,7 @@ def add_markers_gauss_noise(
             continue
 
         # If no sigma or covariance matrix is provided for each camera, use the chunk's marker accuracy
-        if sigma is None and cov is None:
+        if std is None and cov is None:
             # If no sigma is provided for each marker, use the chunk's marker accuracy
             if not marker.reference.accuracy:
                 sigma = chunk.marker_location_accuracy

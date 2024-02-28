@@ -886,7 +886,7 @@ def main(
         return params
 
     logger.info("Loading estimated camera interior orientation...")
-    cam_io_files = sorted((proj_dir / "Monte_Carlo_output").glob("*_cal1.xml"))
+    cam_io_files = sorted((proj_dir / "Monte_Carlo_output").glob("*_cal*.xml"))
     # file = cam_io_files[0]
     camera_params = {}
     for file in cam_io_files:
@@ -933,7 +933,7 @@ def main(
 
 if __name__ == "__main__":
     proj_dir = Path("data/rossia/simulation_rossia_relative")
-    # proj_dir = Path("data/rossia/simulation_rossia_gcp_aat")
+    proj_dir = Path("data/rossia/simulation_rossia_gcp_aat_test")
     # proj_dir = Path("data/rossia/simulation_rossia_relative_10px")
     pcd_ext = "ply"
     compute_full_covariance = True
