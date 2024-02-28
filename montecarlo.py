@@ -232,7 +232,9 @@ def run_iteration(
 
     cleanup_run = True
 
+    # Unpack the iterable
     run_idx, simu_dir, optimise_intrinsics, pts_offset = iterable
+    pts_offset = Metashape.Vector(pts_offset)
 
     logger.info(f"Run iteration {run_idx}/ {num_randomisations-1}...")
 
@@ -472,7 +474,7 @@ def montecarlo_simulation(
         randomisation,
         [simu_dir] * act_num_randomisations,
         [optimise_intrinsics] * act_num_randomisations,
-        [pts_offset] * act_num_randomisations,
+        [list(pts_offset)] * act_num_randomisations,
     )
 
     # Run the simulation
