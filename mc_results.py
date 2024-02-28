@@ -1,4 +1,3 @@
-import shutil
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List
@@ -19,6 +18,7 @@ from logger import setup_logger
 from thirdparty import transformations as tf
 
 matplotlib.use("agg")
+
 
 logger = setup_logger(name="MC", log_level="INFO")
 
@@ -142,57 +142,6 @@ def write_pcd_las(
     return True
 
 
-def generate_random_data(directory, npcd, npoints, noise_std):
-    directory = Path(directory)
-    if directory.exists():
-        shutil.rmtree(directory)
-    directory.mkdir(parents=True)
-
-    def random_points3d_uniform(
-        npoints=1000,
-        xlim=(100, 200),
-        ylim=(100, 200),
-        zlim=(0, 1),
-        datatype=np.float32,
-    ):
-        rng = np.random.default_rng(seed=0)
-        x = rng.uniform(xlim[0], xlim[1], npoints)
-        y = rng.uniform(ylim[0], ylim[1], npoints)
-        z = rng.uniform(zlim[0], zlim[1], npoints)
-        return np.stack([x, y, z], axis=1).astype(datatype)
-
-    def generate_simulated_pcd(pcd_path, ref_pcd_path, noise_std):
-        rng = np.random.default_rng()
-        xyz = load_pcd(ref_pcd_path)
-        xyz += rng.normal(0, noise_std, xyz.shape)
-        return write_pcd(xyz, pcd_path)
-
-    # generate random reference pcd
-    ref_pcd_path = directory / "sparse_pts_reference.ply"
-    xyz = random_points3d_uniform(npoints)
-    write_pcd(xyz, ref_pcd_path)
-
-    # generate random pcds starting from reference and adding noise
-    output_directory = directory / "Monte_Carlo_output"
-    output_directory.mkdir()
-
-    if npcd > 1000:
-        delayed_tasks = []
-        for i in range(npcd):
-            path = output_directory / f"{i:04}_pts.ply"
-            generate_simulated_pcd(path, ref_pcd_path, noise_std)
-
-            delayed_tasks.append(
-                dask.delayed(generate_simulated_pcd)(path, ref_pcd_path, noise_std)
-            )
-
-        dask.compute(*delayed_tasks)
-    else:
-        for i in range(npcd):
-            path = output_directory / f"{i:04}_pts.ply"
-            generate_simulated_pcd(path, ref_pcd_path, noise_std)
-
-
 def make_2D_scatter_plot(
     x_values: np.ndarray,
     y_values: np.ndarray,
@@ -204,8 +153,8 @@ def make_2D_scatter_plot(
     xlabel: str = "X",
     ylabel: str = "Y",
     colorbar: bool = False,
-    colorbar_label: str = "Color Bar Label",
-    cmap: str = "viridis",
+    colorbar_label: str = None,
+    cmap: str = None,
     colorbar_limits: List = None,
 ) -> plt.Axes:
     """
@@ -222,13 +171,14 @@ def make_2D_scatter_plot(
         xlabel (str, optional): Label for the x-axis. Defaults to "X".
         ylabel (str, optional): Label for the y-axis. Defaults to "Y".
         colorbar (bool, optional): Whether to add a colorbar. Defaults to False.
-        cmap (str, optional): The colormap to use for coloring the points. Defaults to "viridis".
-        Colorbar_label (str, optional): Label for the colorbar. Defaults to "Color Bar Label".
+        cmap (str, optional): The color palette to use for coloring the points. Choose one from seaborn/matplotlib palettes. If None, a cubehelix palette is used. Defaults to "None".
+        Colorbar_label (str, optional): Label for the colorbar. Defaults to None.
         colorbar_limits (tuple, optional): Tuple containing the lower and upper limits of the colorbar. Defaults to None.
 
     Returns:
         plt.Axes: The Axes object containing the plot.
     """
+
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(5, 5))
 
@@ -236,6 +186,11 @@ def make_2D_scatter_plot(
         vmin, vmax = colorbar_limits
     else:
         vmin, vmax = color_values.min(), color_values.max()
+
+    if cmap is None:
+        my_cmap = sns.cubehelix_palette(start=0.5, rot=-0.5, as_cmap=True)
+    else:
+        my_cmap = sns.color_palette(cmap, as_cmap=True)
 
     ax.margins(0.05)
     plot = ax.scatter(
@@ -246,7 +201,7 @@ def make_2D_scatter_plot(
         s=markersize,
         vmin=vmin,
         vmax=vmax,
-        cmap=cmap,
+        cmap=my_cmap,
     )
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
@@ -255,8 +210,7 @@ def make_2D_scatter_plot(
         ax.set_title(title)
 
     if colorbar:
-        cbar = plt.colorbar(plot, ax=ax)
-        cbar.set_label(colorbar_label)
+        plt.colorbar(plot, ax=ax, label=colorbar_label)
 
     return ax
 
@@ -265,14 +219,11 @@ def make_3D_scatter_plot(
     x_values: np.ndarray,
     y_values: np.ndarray,
     z_values: np.ndarray,
-    color_values: np.ndarray,
-    marker: str = "o",
+    color_values: np.ndarray = None,
     markersize: int = 1,
     out_path: Path = "3D_scatter_plot.html",
     title: str = "3D Scatter Plot",
-    colorbar: bool = False,
-    colorbar_label: str = "Colorbar Label",
-    colorbar_limits: List = None,
+    colorbar_label: str = None,
 ):
     """
     Create a 3D scatter plot using Plotly.
@@ -281,7 +232,7 @@ def make_3D_scatter_plot(
         x_values (np.ndarray): The x-coordinates of the points.
         y_values (np.ndarray): The y-coordinates of the points.
         z_values (np.ndarray): The z-coordinates of the points.
-        color_values (np.ndarray): The values to use for coloring the points.
+        color_values (np.ndarray): The values to use for coloring the points. Defaults to None.
         marker (str, optional): Marker style. Defaults to "o".
         markersize (int, optional): Marker size. Defaults to 1.
         out_path (Path, optional): The path where the plot will be saved. Defaults to "3D_scatter_plot.html".
@@ -378,21 +329,22 @@ def make_precision_plot(
 
     # Loop through each axis
     for i, (title, prec, lim) in enumerate(zip(["X", "Y", "Z"], [sx, sy, sz], clim)):
-        ax = make_2D_scatter_plot(
+        make_2D_scatter_plot(
             x,
             y,
             prec * scale_fct,
             ax=axes[i],
             markersize=point_size,
-            colorbar=True,
-            cmap="viridis",
             title=f"Precision {title} [{scalefct_units[scale_fct]}]",
+            colorbar=True,
+            cmap=None,
             colorbar_label="Standard Deviation",
             colorbar_limits=lim,
         )
 
     fig.tight_layout()
     fig.savefig(out_path, dpi=300)
+    plt.close(fig)
 
     if make_3D_plot:
         make_3D_scatter_plot(
@@ -403,9 +355,7 @@ def make_precision_plot(
             markersize=point_size,
             out_path=out_path.parent / (out_path.stem + ".html"),
             title="3D Scatter Plot",
-            colorbar=True,
             colorbar_label="3D Standard Deviation",
-            colorbar_limits=clim,
         )
 
 
@@ -496,6 +446,10 @@ def compute_statistics(
 
 
 def make_doming_plot(data: pd.DataFrame, fig_path: Path, print_stats: bool = False):
+    if data.empty:
+        logger.warning("No GCP or CP data to plot")
+        return
+
     if print_stats:
         for name, group in data.groupby("Enable"):
             print(name, group.describe())
@@ -509,6 +463,7 @@ def make_doming_plot(data: pd.DataFrame, fig_path: Path, print_stats: bool = Fal
         1: "o",  # Enabled points
         0: "D",  # Disabled points
     }
+
     fig, axes = plt.subplots(2, 1, figsize=(8, 6))
     # Upper plot: Scatter plot of points with Z_error as color
     axes[0].margins(0.05)
@@ -518,17 +473,16 @@ def make_doming_plot(data: pd.DataFrame, fig_path: Path, print_stats: bool = Fal
             group["X"],
             group["Y"],
             c=group["Z_error"],
-            cmap="viridis",
+            cmap="seismic",
             alpha=0.9,
             marker=marker_style[enabled],
             vmin=vmin,
             vmax=vmax,
         )
         legend_labels.append(group_labels[enabled])
-        cbar = plt.colorbar(scatter, label="Z Error", ax=axes[0])
-    axes[0].set_xlabel("X")
-    axes[0].set_ylabel("Y")
-    axes[0].set_title("2D Scatter Plot of Control Points (CPs)")
+    plt.colorbar(scatter, label="Z Error [m]", ax=axes[0])
+    axes[0].set_xlabel("X [m]")
+    axes[0].set_ylabel("Y [m]")
     axes[0].set_aspect("equal")
     axes[0].legend(legend_labels)
 
@@ -548,9 +502,8 @@ def make_doming_plot(data: pd.DataFrame, fig_path: Path, print_stats: bool = Fal
             c="red" if name == 1 else "blue",
             alpha=0.9,
         )
-    axes[1].set_xlabel("Distance from GCP Baricenter")
-    axes[1].set_ylabel("Z Error")
-    axes[1].set_title("Distance from GCP Baricenter vs Z Error")
+    axes[1].set_xlabel("Distance from GCP Baricenter [m]")
+    axes[1].set_ylabel("Z Error [m]")
     axes[1].legend(legend_labels)
 
     plt.tight_layout()
@@ -622,6 +575,7 @@ def main(
             skip_cov = True
     else:
         skip_cov = True
+    logger.info("Done")
 
     # # Add offset to the mean point coordinates
     mean += offset
@@ -646,6 +600,7 @@ def main(
         R = T[:3, :3]
         cov = np.array([R @ cov @ R.T for cov in np_cov])
         std = np.sqrt(np.array([np.diag(c) for c in cov]))
+    logger.info("Done")
 
     # Compute statistics for the mean and the rototranslated points
     logger.info("Computing statistics...")
@@ -656,7 +611,6 @@ def main(
         make_plot=True,
         figure_path=proj_dir / "difference_stats.png",
     )
-    logger.info("Sta")
     compute_statistics(
         estimated=points_roto,
         reference=ref_pcd,
@@ -695,11 +649,12 @@ def main(
         rms[:, 0],
         rms[:, 1],
         rms[:, 2],
-        proj_dir / "estimated_precision_rms.png",
+        proj_dir / "estimated_rms.png",
         scale_fct=scale_fct,
         clim=clim,
         make_3D_plot=True,
     )
+    logger.info("Done")
 
     # Make 2D precision plot with point precision from MS
     logger.info("Reading precision from metashape data...")
@@ -713,7 +668,7 @@ def main(
         xyz = data[:, 1:4] - off
         rgb = data[:, 4:7]
         precision = data[:, 7:10]
-        covariances = data[:, 10:]
+        # covariances = data[:, 10:]
         make_precision_plot(
             xyz[:, 0],
             xyz[:, 1],
@@ -725,6 +680,8 @@ def main(
             scale_fct=scale_fct,
             clim=clim,
         )
+        logger.info("Done")
+
     else:
         logger.info("No reference precision computed from metashape data found")
 
@@ -752,15 +709,17 @@ def main(
         rgb=rgb,
         **scalar_fields,
     )
+    logger.info("Done")
 
     ### Do Ground Control Analysis
 
     # Make doming plot from ground control data for the first and file
     logger.info("Reading ground control data for doming analysis...")
     gc_files = sorted((proj_dir / "Monte_Carlo_output").glob("*_GC.txt"))
-    file = gc_files[0]
+    run_idx = 0
+    file = gc_files[run_idx]
     data = pd.read_csv(file, skiprows=1, header=0)
-    fig_path = proj_dir / "doming_effect.png"
+    fig_path = proj_dir / f"doming_effect_run_{run_idx:04d}.png"
     make_doming_plot(data, fig_path, print_stats=False)
 
     # Compute summary statistics for all ground control files
@@ -781,6 +740,8 @@ def main(
     logger.info(f"Mean Z RMSE: {rmse_z.mean():.4f} m")
     logger.info(f"Max Z error: {max_z_err.mean():.4f} m")
 
+    logger.info("Done")
+
     # Read cameras data
     def load_camera_file(file: Path):
         data = pd.read_csv(file, delimiter=",", skiprows=1)
@@ -796,7 +757,6 @@ def main(
 
     logger.info("Loading estimated camera exterior orientation...")
     cam_files = sorted((proj_dir / "Monte_Carlo_output").glob("*_cams_c.txt"))
-    # file = cam_files[0]
     coords, angles = {}, {}
     for file in cam_files:
         run = file.stem.split("_")[0]
@@ -804,78 +764,126 @@ def main(
     logger.info("Done")
 
     # Compute statistics for the camera exterior orientation
+    logger.info("Computing statistics for the camera exterior orientation...")
     a = np.stack(list(coords.values()), axis=2)
     b = np.stack(list(angles.values()), axis=2)
     data = np.concatenate([a, b], axis=1)
     cam_std = np.std(data, axis=2, ddof=cov_ddof)
+    cam_std = pd.DataFrame(cam_std, columns=["X", "Y", "Z", "Yaw", "Pitch", "Roll"])
 
-    fig, axes = plt.subplots(3, 2, figsize=(10, 10))
-    # Plot standard hist and KDE deviation of coordinates
-    vct = cam_std[:, :3]
-    axes[0, 0] = sns.histplot(vct, ax=axes[0, 0], stat="density", legend=True)
-    axes[0, 0].set_xlabel("Coordinate [m]")
-    axes[0, 0].set_ylabel("Density")
-    axes[0, 0].grid(True)
-    axes[0, 0].set_title("Histogram of Coordinates")
-    axes[1, 0] = sns.kdeplot(data=vct, fill=True, ax=axes[1, 0], legend=True)
-    axes[1, 0].set_xlabel("Coordinate [m]")
-    axes[1, 0].set_ylabel("Density")
-    axes[1, 0].grid(True)
-    axes[1, 0].set_title("KDE of Coordinates")
-    axes[2, 0] = sns.boxplot(data=std[:, :3], ax=axes[2, 0])
-    axes[2, 0].set_xlabel("Axis")
-    axes[2, 0].set_ylabel("Standard Deviation [m]")
-    axes[2, 0].grid(True)
-    axes[2, 0].set_title("Boxplot of Coordinates")
-    # Plot standard deviation hist and KDE of angles
-    vct = cam_std[:, 3:]
-    axes[0, 1] = sns.histplot(vct, stat="density", ax=axes[0, 1], legend=True)
-    axes[0, 1].set_xlabel("Angles [deg]")
-    axes[0, 1].set_ylabel("Density")
-    axes[0, 1].grid(True)
-    axes[0, 1].set_title("Histogram of Angles")
-    axes[1, 1] = sns.kdeplot(vct, fill=True, ax=axes[1, 1], legend=True)
-    axes[1, 1].set_xlabel("Angles [deg]")
-    axes[1, 1].set_ylabel("Density")
-    axes[1, 1].grid(True)
-    axes[1, 1].set_title("KDE of Angles")
-    axes[2, 1] = sns.boxplot(data=std[:, 3:], ax=axes[2, 1])
-    axes[2, 1].set_xlabel("Axis")
-    axes[2, 1].set_ylabel("Standard Deviation [m]")
-    axes[2, 1].grid(True)
-    axes[1, 1].set_title("Boxplot of Angles")
-    # Set titles
+    # Make histogram plots of the camera exterior orientation
+    logger.info("Making plots...")
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    for i, (coord, ax) in enumerate(
+        zip(["X", "Y", "Z", "Yaw", "Pitch", "Roll"], axes.flatten())
+    ):
+        sns.histplot(data=cam_std, x=coord, ax=ax, stat="density", kde=True)
+        ax.set_xlabel("[m]" if i < 3 else "[deg]")
+        ax.set_ylabel("")
+        ax.grid(True)
+        ax.set_title(f"Precision {coord}")
+    plt.tight_layout()
+    fig.savefig(proj_dir / "camera_stats_histograms.png", dpi=300)
+    plt.close(fig)
+
+    # Plot barplots for each coordinate
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    n_ticks = max(len(cam_std) // 4, 1)  # Adjust to change ticks density
+    for i, (coord, ax) in enumerate(
+        zip(["X", "Y", "Z", "Yaw", "Pitch", "Roll"], axes.flatten())
+    ):
+        sns.barplot(data=cam_std, x=cam_std.index, y=coord, ax=ax)
+        ax.set_xlabel("Camera Index")
+        ax.set_ylabel(f"{coord} [m]" if i < 3 else f"{coord} [deg]")
+        ax.set_title(f"Precision {coord}")
+        ax.xaxis.set_major_locator(plt.MaxNLocator(n_ticks))
     plt.tight_layout()
     fig.savefig(proj_dir / "camera_stats.png", dpi=300)
+    plt.close(fig)
+
+    logger.info("Done")
+
+    # try:
+    #     fig, axes = plt.subplots(3, 2, figsize=(10, 10))
+    #     # Plot standard hist and KDE deviation of coordinates
+    #     vct = cam_std.loc[:, ["X", "Y", "Z"]]
+    #     axes[0, 0] = sns.histplot(
+    #         data=cam_std,
+    #         x="x",
+    #         y="y",
+    #         z="z",
+    #         ax=axes[0, 0],
+    #         stat="density",
+    #         legend=True,
+    #     )
+    #     axes[0, 0].set_xlabel("Coordinate [m]")
+    #     axes[0, 0].set_ylabel("Frequency")
+    #     axes[0, 0].grid(True)
+    #     axes[0, 0].set_title("Histogram of Coordinates")
+    #     # axes[0, 0].legend(labels=["x", "y", "z"])
+    #     axes[1, 0] = sns.kdeplot(data=vct, fill=True, ax=axes[1, 0], legend=True)
+    #     axes[1, 0].set_xlabel("Coordinate [m]")
+    #     axes[1, 0].set_ylabel("Frequency")
+    #     axes[1, 0].grid(True)
+    #     axes[1, 0].set_title("KDE of Coordinates")
+    #     axes[1, 0].legend(labels=["x", "y", "z"])
+    #     axes[2, 0] = sns.boxplot(data=vct, ax=axes[2, 0], legend=True)
+    #     axes[2, 0].set_title("Boxplot of Coordinates")
+    #     axes[2, 0].set_xlabel("Axis")
+    #     axes[2, 0].set_ylabel("Standard Deviation [m]")
+    #     axes[2, 0].grid(True)
+    #     # Plot standard deviation hist and KDE of angles
+    #     vct = cam_std[:, 3:]
+    #     axes[0, 1] = sns.histplot(vct, stat="density", ax=axes[0, 1], legend=True)
+    #     axes[0, 1].set_xlabel("Angles [deg]")
+    #     axes[0, 1].set_ylabel("Density")
+    #     axes[0, 1].grid(True)
+    #     axes[0, 1].set_title("Histogram of Angles")
+    #     axes[0, 1].legend(labels=["yaw", "pitch", "roll"])
+    #     axes[1, 1] = sns.kdeplot(vct, fill=True, ax=axes[1, 1], legend=True)
+    #     axes[1, 1].set_xlabel("Angles [deg]")
+    #     axes[1, 1].set_ylabel("Density")
+    #     axes[1, 1].grid(True)
+    #     axes[1, 1].set_title("KDE of Angles")
+    #     axes[1, 1].legend(labels=["yaw", "pitch", "roll"])
+    #     axes[2, 1] = sns.boxplot(vct, ax=axes[2, 1])
+    #     axes[2, 1].set_xlabel("Axis")
+    #     axes[2, 1].set_ylabel("Standard Deviation [m]")
+    #     axes[2, 1].grid(True)
+    #     axes[1, 1].set_title("Boxplot of Angles")
+    #     plt.tight_layout()
+    #     fig.savefig(proj_dir / "camera_stats.png", dpi=300)
+    #     plt.close(fig)
+    # except Exception as e:
+    #     logger.error(f"Error plotting camera stats: {e}")
 
     # Load camera interior orientation
     # NOTE: only works with single camera projects for now
     def read_cameraio_file(file: Path):
-        # Parse the XML
+        prm = [
+            "width",
+            "height",
+            "f",
+            "cx",
+            "cy",
+            "k1",
+            "k2",
+            "k3",
+            "p1",
+            "p2",
+            "b1",
+            "b2",
+        ]
+
+        # Extract calibration parameters from the XML file
         tree = ET.parse(file)
         root = tree.getroot()
+        params = {}
+        for p in prm:
+            if root.find(p) is not None:
+                params[p] = float(root.find(p).text)
 
-        # Extract calibration parameters
-        width = int(root.find("width").text)
-        height = int(root.find("height").text)
-        f = float(root.find("f").text)
-        cx = float(root.find("cx").text)
-        cy = float(root.find("cy").text)
-        k1 = float(root.find("k1").text)
-        k2 = float(root.find("k2").text)
-        k3 = float(root.find("k3").text)
-        p1 = float(root.find("p1").text)
-        p2 = float(root.find("p2").text)
-
-        # Build camera matrix
-        # camera_matrix = np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]])
-
-        # Build distortion parameters vector
-        # dist_params = np.array([k1, k2, p1, p2, k3])
-
-        camera_params = [width, height, f, cx, cy, k1, k2, k3, p1, p2]
-
-        return camera_params
+        return params
 
     logger.info("Loading estimated camera interior orientation...")
     cam_io_files = sorted((proj_dir / "Monte_Carlo_output").glob("*_cal1.xml"))
@@ -887,30 +895,50 @@ def main(
     logger.info("Done")
 
     # Compute statistics for the camera interior orientation
-    data = np.array(list(camera_params.values()))
+    logger.info("Computing statistics for the camera interior orientation...")
+    camera_params = pd.DataFrame(camera_params).T
+    camera_params = camera_params.dropna()
+    cams_std = camera_params.std()
+    cams_std.drop(["width", "height"], inplace=True)
+
+    # Make barplot for each camera parameter
+    logger.info("Making plots...")
+
+    # Determine the number of rows and columns for the subplot grid
+    n_params = len(cams_std)
+    n_cols = min(n_params, 3)  # Maximum of 3 columns
+    n_rows = (n_params - 1) // n_cols + 1
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 5 * n_rows))
+    # Ensure axes is a 2D array even if only one row or column is present
+    if n_rows == 1:
+        axes = np.expand_dims(axes, axis=0)
+    if n_cols == 1:
+        axes = np.expand_dims(axes, axis=1)
+    # Iterate over parameters and their standard deviations
+    for (param, val), ax in zip(cams_std.items(), axes.flatten()):
+        # sns.barplot(x=[param], y=[val], ax=ax)
+        ax.plot([param], [val], marker="o", linestyle="", markersize=8)
+        ax.set_xlabel("Camera Parameter")
+        ax.set_ylabel("Standard Deviation")
+        ax.set_title(f"Standard Deviation of {param}")
+    # Remove any unused subplots
+    for i in range(n_params, n_rows * n_cols):
+        axes.flatten()[i].remove()
+    plt.tight_layout()
+    fig.savefig(proj_dir / "camera_io_stats.png", dpi=300)
+    plt.close(fig)
 
     logger.info("Done")
 
 
 if __name__ == "__main__":
-    # proj_dir = Path("data/rossia/simulation_rossia_relative")
-    proj_dir = Path("data/rossia_gcp/simulation_rossia_gcp_aat")
+    proj_dir = Path("data/rossia/simulation_rossia_relative")
+    # proj_dir = Path("data/rossia/simulation_rossia_gcp_aat")
+    # proj_dir = Path("data/rossia/simulation_rossia_relative_10px")
     pcd_ext = "ply"
     compute_full_covariance = True
     use_dask = False
     cov_ddof = 1
-
-    # Random data parameters
-    generate_random_pcd = False
-    num_pcd = 1000
-    num_points = 100000
-    noise_std = 0.01
-
-    # Generate Random point cloud as test data
-    if generate_random_pcd:
-        proj_dir = Path("data/test")
-        generate_random_data(proj_dir, num_pcd, num_points, noise_std)
-        logger.info("Generated random point cloud data")
 
     main(
         proj_dir,

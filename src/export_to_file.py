@@ -2,6 +2,8 @@ import math
 
 import Metashape
 
+from .utils import backward_compatibility
+
 
 def save_sparse(
     chunk: Metashape.Chunk,
@@ -11,7 +13,11 @@ def save_sparse(
     sep: str = ",",
     header: bool = True,
 ):
-    points = chunk.point_cloud.points
+    if not backward_compatibility():
+        tie_points = chunk.tie_points
+    else:
+        tie_points = chunk.point_cloud
+
     T = chunk.transform.matrix
     if (
         chunk.transform.translation
@@ -47,7 +53,7 @@ def save_sparse(
                     ]
                 )
             f.write(f"{sep.join(header)}\n")
-        for point in points:
+        for point in tie_points.points:
             if not point.valid:
                 continue
 
@@ -61,7 +67,7 @@ def save_sparse(
             ]
             if save_color:
                 track_id = point.track_id
-                color = chunk.point_cloud.tracks[track_id].color
+                color = tie_points.tracks[track_id].color
                 line.extend([color[0], color[1], color[2]])
             if save_cov:
                 cov = point.cov

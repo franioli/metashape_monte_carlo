@@ -3,7 +3,17 @@ from pathlib import Path
 import Metashape
 import numpy as np
 
+from src.utils import backward_compatibility
 from src.workflow import optimize_cameras
+
+
+def get_ms_tie_points(chunk: Metashape.Chunk):
+    backward = backward_compatibility()
+    if not backward:
+        return chunk.tie_points
+    else:
+        return chunk.point_cloud
+
 
 # def compute_reprojection_error_statistics(chunk: Metashape.Chunk, verbose: bool = True):
 #     points = chunk.point_cloud.points
@@ -44,8 +54,9 @@ from src.workflow import optimize_cameras
 def compute_reprojection_error(
     chunk: Metashape.Chunk, verbose: bool = False, include_markers: bool = False
 ) -> dict:
-    points = chunk.point_cloud.points
-    projections = chunk.point_cloud.projections
+    tie_points = get_ms_tie_points(chunk)
+    points = tie_points.points
+    projections = tie_points.projections
     cam_to_process = [cam for cam in doc.chunk.cameras if cam.transform]
 
     res_by_cam = {cam.label: [] for cam in cam_to_process}
@@ -160,11 +171,10 @@ if __name__ == "__main__":
     v, residuals_by_cam = compute_reprojection_error(chunk, include_markers=True)
 
     # Compute the number of observations and parameters
+    tie_points = get_ms_tie_points(chunk)
     n_obs = len(v)
     n_params = (
-        6 * len(chunk.cameras)
-        + 3 * len(chunk.point_cloud.points)
-        + 7 * len(chunk.sensors)
+        6 * len(chunk.cameras) + 3 * len(tie_points.points) + 7 * len(chunk.sensors)
     )
 
     # Compute sigma02

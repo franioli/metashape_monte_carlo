@@ -7,13 +7,20 @@ from typing import Dict
 
 import Metashape
 
-import mc_results
 from logger import setup_logger
 from src import mc_utils
-from src import workflow as ms
+from src import utils as ms_utils
+from src import workflow as ms_workflow
 from src.export_to_file import save_sparse
 
 logger = setup_logger(name="MC", log_level="DEBUG")
+
+if not ms_utils.check_license():
+    raise Exception(
+        "No licence found. Please check that you linked your license (floating or standalone) wih the Metashape python module."
+    )
+backward_compatibility = ms_utils.backward_compatibility()
+
 NaN = float("NaN")
 metashape_simu_ext = "psz"
 default_intrinsics_optim = dict = {
@@ -67,7 +74,7 @@ def initialise_simulation(
     ref_doc = Metashape.Document()
     ref_doc.open(str(ref_project_path))
     doc = ref_doc.copy()
-    ms.save_project(doc, path=project_path)
+    ms_workflow.save_project(doc, path=project_path)
 
     # Close the reference document
     ref_doc.read_only = False
@@ -98,10 +105,10 @@ def initialise_simulation(
         pts_offset = mc_utils.compute_coordinate_offset(original_chunk)
 
     # Expand region to include all possible points
-    ms.expand_region(original_chunk, 1.5)
+    ms_workflow.expand_region(original_chunk, 1.5)
 
     # Carry out an initial bundle adjustment to ensure that everything subsequent has a consistent reference starting point.
-    ms.optimize_cameras(original_chunk, optimise_intrinsics)
+    ms_workflow.optimize_cameras(original_chunk, optimise_intrinsics)
 
     # Save the sparse point cloud as text file including colour and covariance
     save_sparse(
@@ -132,18 +139,29 @@ def initialise_simulation(
     )
 
     # Export the sparse point cloud
-    zero_error_chunk.exportPoints(
-        str(simu_dir / "sparse_pts_reference.ply"),
-        source_data=Metashape.DataSource.PointCloudData,
-        save_normals=True,
-        save_colors=True,
-        format=Metashape.PointsFormatPLY,
-        crs=crs,
-        shift=pts_offset,
-    )
+    if backward_compatibility:
+        zero_error_chunk.exportPoints(
+            str(simu_dir / "sparse_pts_reference.ply"),
+            source_data=Metashape.DataSource.PointCloudData,
+            save_normals=True,
+            save_colors=True,
+            format=Metashape.PointsFormatPLY,
+            crs=crs,
+            shift=pts_offset,
+        )
+    else:
+        zero_error_chunk.exportPointCloud(
+            str(simu_dir / "sparse_pts_reference.ply"),
+            source_data=Metashape.DataSource.TiePointsData,
+            save_point_color=True,
+            save_point_normal=True,
+            format=Metashape.PointCloudFormatPLY,
+            crs=crs,
+            shift=pts_offset,
+        )
 
     # Save the project
-    ms.save_project(doc)
+    ms_workflow.save_project(doc)
 
     # Clean up the output directory and create a new one
     out_dir = Path(simu_dir) / "Monte_Carlo_output"
@@ -383,15 +401,27 @@ def export_results(chunk: Metashape.Chunk, run_idx: int, out_dir: Path):
     logger.debug(f"Exported calibrations to {out_dir / (basename + '_cal*.xml')}")
 
     # Export the sparse point cloud
-    chunk.exportPoints(
-        str(out_dir / (basename + "_pts.ply")),
-        source_data=Metashape.DataSource.PointCloudData,
-        save_normals=False,
-        save_colors=False,
-        format=Metashape.PointsFormatPLY,
-        crs=crs,
-        shift=pts_offset,
-    )
+    if backward_compatibility:
+        chunk.exportPoints(
+            str(out_dir / (basename + "_pts.ply")),
+            source_data=Metashape.DataSource.PointCloudData,
+            save_normals=False,
+            save_colors=False,
+            format=Metashape.PointsFormatPLY,
+            crs=crs,
+            shift=pts_offset,
+        )
+    else:
+        chunk.exportPointCloud(
+            str(out_dir / (basename + "_pts.ply")),
+            source_data=Metashape.DataSource.TiePointsData,
+            save_point_normal=False,
+            save_point_color=False,
+            format=Metashape.PointCloudFormatPLY,
+            crs=crs,
+            shift=pts_offset,
+        )
+
     logger.debug(f"Exported sparse point cloud to {out_dir / (basename + '_pts.ply')}")
 
 
@@ -477,15 +507,13 @@ def montecarlo_simulation(
 if __name__ == "__main__":
     # Directory where output will be stored and active control file is saved.
     # The files will be generated in a sub-folder named "Monte_Carlo_output"
-    project_path = "data/rossia_gcp/rossia_gcp_aat.psx"
-
-    project_path = Path(project_path)
-    simu_dir = project_path.parent / f"simulation_{project_path.stem}"
+    ref_project_path = "data/rossia/rossia_gcp_aat.psx"
+    simu_name = "simulation_rossia_gcp_aat"
 
     # Define how many times bundle adjustment (Metashape 'optimisation') will be carried out.
-    num_randomisations = 1000
-    run_parallel = True
-    workers = 10
+    num_randomisations = 2000
+    run_parallel = False
+    workers = 5
     # NOTE: Keep the number of workers low if are running on a single CPU as the Metashape bundle adjustment is already multi-threaded and will use all available cores. If this is set too high, it will slow down the simulation and some runs may stuck.
 
     # Resume the Monte Carlo simulation from a specific run number. Set to -1 to start a new simulation.
@@ -494,27 +522,31 @@ if __name__ == "__main__":
     # Define the camera parameter set to optimise in the bundle adjustment.
     optimise_intrinsics = {
         "f": True,
-        "cx": True,
-        "cy": True,
+        "cx": False,
+        "cy": False,
         "b1": False,
         "b2": False,
-        "k1": True,
-        "k2": True,
-        "k3": True,
+        "k1": False,
+        "k2": False,
+        "k3": False,
         "k4": False,
-        "p1": True,
-        "p2": True,
+        "p1": False,
+        "p2": False,
         "tiepoint_covariance": True,
     }
 
     # The offset will be subtracted from point coordinates.
-    # e.g.  pts_offset = Metashape.Vector( [266000, 4702000, 0] )
-    # pts_offset = Metashape.Vector([NaN, NaN, NaN])
-    pts_offset = Metashape.Vector([0.0, 0.0, 0.0])
+    # e.g.  pts_offset = [266000, 4702000, 0] for UTM coordinates
+    # pts_offset = [NaN, NaN, NaN]
+    pts_offset = [0.0, 0.0, 0.0]
+
+    ref_project_path = Path(ref_project_path)
+    simu_dir = ref_project_path.parent / simu_name
+    offset = Metashape.Vector(pts_offset)
 
     # Run the Monte Carlo simulation
     montecarlo_simulation(
-        project_path=project_path,
+        project_path=ref_project_path,
         num_randomisations=num_randomisations,
         simu_dir=simu_dir,
         run_parallel=run_parallel,
@@ -522,10 +554,4 @@ if __name__ == "__main__":
         resume_sumulations_from=resume_sumulations_from,
         optimise_intrinsics=optimise_intrinsics,
         pts_offset=pts_offset,
-    )
-
-    # Read and process the output files
-    mc_results.main(
-        proj_dir=simu_dir,
-        pcd_ext="ply",
     )

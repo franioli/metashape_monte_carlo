@@ -5,8 +5,18 @@ import random
 
 import Metashape
 
+from src.utils import backward_compatibility
+
 # # Reset the random seed, so that all equivalent runs of this script are started identically
 # random.seed(1)
+
+
+def get_ms_tie_points(chunk: Metashape.Chunk):
+    backward = backward_compatibility()
+    if not backward:
+        return chunk.tie_points
+    else:
+        return chunk.point_cloud
 
 
 def compute_coordinate_offset(chunk: Metashape.Chunk):
@@ -14,7 +24,8 @@ def compute_coordinate_offset(chunk: Metashape.Chunk):
     if crs is None:
         raise ValueError("Chunk coordinate system is not set")
 
-    points = [point.coord for point in chunk.point_cloud.points if point.valid]
+    tie_points = get_ms_tie_points(chunk)
+    points = [point.coord for point in tie_points.points if point.valid]
 
     if not points:
         return Metashape.Vector([0, 0, 0])
@@ -35,7 +46,8 @@ def compute_observation_distances(chunk: Metashape.Chunk, dir_path: str) -> str:
 
     """
 
-    points = chunk.point_cloud.points
+    tie_points = get_ms_tie_points(chunk)
+    points = tie_points.points
     npoints = len(points)
     camera_index = 0
     fpath = os.path.join(dir_path, "_observation_distances.txt")
@@ -49,7 +61,7 @@ def compute_observation_distances(chunk: Metashape.Chunk, dir_path: str) -> str:
             fx = camera.sensor.calibration.f
 
             point_index = 0
-            for proj in chunk.point_cloud.projections[camera]:
+            for proj in tie_points.projections[camera]:
                 track_id = proj.track_id
                 while point_index < npoints and points[point_index].track_id < track_id:
                     point_index += 1
@@ -121,8 +133,9 @@ def set_chunk_zero_error(
             )
 
     # Set the marker and point projections to be zero error, from which we add simulated error
-    points = chunk_.point_cloud.points
-    point_proj = chunk_.point_cloud.projections
+    tie_points = get_ms_tie_points(chunk)
+    points = tie_points.points
+    point_proj = tie_points.projections
     npoints = len(points)
     for camera in chunk_.cameras:
         if not camera.transform:
@@ -209,7 +222,8 @@ def add_observations_gauss_noise(chunk: Metashape.Chunk):
     tie_proj_stdev = chunk.tiepoint_accuracy / math.sqrt(2)
     marker_proj_stdev = chunk.marker_projection_accuracy / math.sqrt(2)
 
-    point_proj = chunk.point_cloud.projections
+    tie_points = get_ms_tie_points(chunk)
+    point_proj = tie_points.projections
 
     for camera in chunk.cameras:
         # Skip cameras without estimated exterior orientation
@@ -237,4 +251,8 @@ def add_observations_gauss_noise(chunk: Metashape.Chunk):
                     random.gauss(0, marker_proj_stdev),
                 ]
             )
-            marker.projections[camera].coord += noise
+            if backward_compatibility():
+                marker.projections[camera].coord += noise
+            else:
+                marker.projections[camera].coord.x += noise[0]
+                marker.projections[camera].coord.y += noise[1]
