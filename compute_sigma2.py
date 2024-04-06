@@ -2,9 +2,8 @@ from pathlib import Path
 
 import Metashape
 import numpy as np
-
-from src.utils import backward_compatibility
-from src.workflow import optimize_cameras
+from metashapelib.utils import backward_compatibility
+from metashapelib.workflow import optimize_cameras
 
 
 def get_ms_tie_points(chunk: Metashape.Chunk):
@@ -102,7 +101,7 @@ def compute_reprojection_error(
     return v, res_by_cam
 
 
-def compute_sigma02(residuals: np.ndarray, n_obs: int, n_params: int, Q=None):
+def sigma02(residuals: np.ndarray, n_obs: int, n_params: int, Q=None):
     if Q is None:
         sigma02 = np.dot(residuals, residuals) / (n_obs - n_params)
     else:
@@ -114,6 +113,27 @@ def compute_sigma02(residuals: np.ndarray, n_obs: int, n_params: int, Q=None):
         # Compute sigma02
         Q_chol_res = Q_chol @ residuals
         sigma02 = Q_chol_res.T @ Q_chol_res / (n_obs - n_params)
+
+    return sigma02
+
+
+def compute_sigma02(chunk: Metashape.Chunk, verbose: bool = False):
+    # Compute the reprojection error
+    v, _ = compute_reprojection_error(chunk, include_markers=True)
+
+    # Compute the number of observations and parameters
+    tie_points = get_ms_tie_points(chunk)
+    n_obs = len(v)
+    n_params = (
+        6 * len(chunk.cameras) + 3 * len(tie_points.points) + 7 * len(chunk.sensors)
+    )
+
+    # Compute sigma02
+    # sigma02 = sigma02(v, n_obs, n_params)
+    sigma02 = np.dot(v, v) / (n_obs - n_params)
+
+    if verbose:
+        print(f"sigma02 = {sigma02:.5f}")
 
     return sigma02
 
@@ -178,7 +198,7 @@ if __name__ == "__main__":
     )
 
     # Compute sigma02
-    sigma02 = compute_sigma02(v, n_obs, n_params)
+    s02 = sigma02(v, n_obs, n_params)
     print(f"sigma02 = {sigma02:.5f}")
 
     # Tests
@@ -196,6 +216,6 @@ if __name__ == "__main__":
     cov = np.array(R * cov * R.t()).reshape(3, 3)
 
     std = np.sqrt(np.diag(cov))
-    std_scaled = np.sqrt(sigma02 * np.diag(cov))
+    std_scaled = np.sqrt(s02 * np.diag(cov))
 
     print("done.")

@@ -5,8 +5,9 @@ import random
 
 import Metashape
 import numpy as np
+from tqdm import tqdm
 
-from src.utils import backward_compatibility
+from metashapelib import backward_compatibility
 
 # Reset the random seed, so that all equivalent runs of this script are started identically
 # random.seed(1)
@@ -145,10 +146,10 @@ def compute_observation_distances(chunk: Metashape.Chunk, dir_path: str) -> str:
 
 def set_chunk_zero_error(
     chunk: Metashape.Chunk,
+    new_chunk_label: str = None,
+    inplace: bool = False,
     optimize_cameras: bool = False,
     otimize_params: dict = {},
-    inplace: bool = False,
-    new_chunk_label: str = None,
 ):
     """
     Set the chunk's error to zero by adjusting marker and camera locations.
@@ -169,34 +170,32 @@ def set_chunk_zero_error(
     """
     # Make a copy of the chunk if not inplace
     if not inplace:
-        chunk_ = chunk.copy()
+        chunk = chunk.copy()
 
-        # Set the chunk label
-        if new_chunk_label:
-            chunk_.label = new_chunk_label
-    else:
-        chunk_ = chunk
+    # Set the chunk label
+    if new_chunk_label:
+        chunk.label = new_chunk_label
 
     # Get the chunk_ coordinate system
-    crs = chunk_.crs
+    crs = chunk.crs
 
     # Set the sensor estimated internal parameters to the reference
-    for sensor in chunk_.sensors:
+    for sensor in chunk.sensors:
         if sensor.user_calib:
             sensor.user_calib = sensor.calibration
 
     # Set the marker locations be zero error, if the marker is enabled (GCPs)
-    for marker in chunk_.markers:
+    for marker in chunk.markers:
         if marker.position is not None and marker.reference.enabled:
             marker.reference.location = crs.project(
-                chunk_.transform.matrix.mulp(marker.position)
+                chunk.transform.matrix.mulp(marker.position)
             )
 
     # Set the camera locations be zero error, if the camera has prior locations
-    for camera in chunk_.cameras:
+    for camera in chunk.cameras:
         if camera.transform and camera.reference.enabled:
             camera.reference.location = crs.project(
-                chunk_.transform.matrix.mulp(camera.center)
+                chunk.transform.matrix.mulp(camera.center)
             )
 
     # Set the marker and point projections to be zero error, from which we add simulated error
@@ -204,13 +203,56 @@ def set_chunk_zero_error(
     points = tie_points.points
     point_proj = tie_points.projections
     npoints = len(points)
-    for camera in chunk_.cameras:
+
+    # # Pre-sort points by track_id for faster search
+    # points = sorted(points, key=lambda point: point.track_id)
+
+    # # Create a dictionary for fast lookup of point indices by track_id
+    # track_id_to_index = {point.track_id: i for i, point in enumerate(points)}
+
+    # for camera in tqdm(chunk_.cameras):
+    #     if not camera.transform:
+    #         continue
+
+    #     # Find valid point projections for this camera
+    #     valid_projections = [
+    #         proj for proj in point_proj[camera] if proj.track_id in track_id_to_index
+    #     ]
+
+    #     # Use vectorized operations for efficiency
+    #     track_ids = np.array([proj.track_id for proj in valid_projections])
+    #     point_indices = np.array(
+    #         [track_id_to_index[track_id] for track_id in track_ids]
+    #     )
+    #     valid_points = np.array(points)[point_indices]  # Filter out the valid ones
+
+    #     for proj, point in zip(valid_projections, valid_points):
+    #         coord = camera.project(point.coord)
+    #         proj.coord = coord
+
+    #     # Set the marker projections be zero error
+    #     for marker in chunk_.markers:
+    #         if (not marker.projections[camera]) or (not marker.position):
+    #             continue
+    #         marker.projections[camera].coord = camera.project(marker.position)
+
+    tie_points = get_ms_tie_points(chunk)
+    points = tie_points.points
+    point_proj = tie_points.projections
+    npoints = len(points)
+
+    for camera in tqdm(chunk.cameras, desc="Camera Loop", position=0):
         if not camera.transform:
             continue
 
         # Set the point projections be zero error
         point_index = 0
-        for proj in point_proj[camera]:
+        for proj in tqdm(
+            point_proj[camera],
+            desc=f"Projections Loop for cam {camera.label}",
+            position=1,
+            leave=False,
+        ):
             track_id = proj.track_id
             while point_index < npoints and points[point_index].track_id < track_id:
                 point_index += 1
@@ -220,13 +262,13 @@ def set_chunk_zero_error(
                 proj.coord = camera.project(points[point_index].coord)
 
         # Set the marker projections be zero error
-        for marker in chunk_.markers:
+        for marker in chunk.markers:
             if (not marker.projections[camera]) or (not marker.position):
                 continue
             marker.projections[camera].coord = camera.project(marker.position)
 
     if optimize_cameras:
-        chunk_.optimizeCameras(
+        chunk.optimizeCameras(
             fit_f=otimize_params.get("f", False),
             fit_cx=otimize_params.get("cx", False),
             fit_cy=otimize_params.get("cy", False),
@@ -241,7 +283,7 @@ def set_chunk_zero_error(
             tiepoint_covariance=otimize_params.get("tiepoint_covariance", False),
         )
 
-    return chunk_
+    return chunk
 
 
 def add_cameras_gauss_noise(chunk: Metashape.Chunk, sigma: float = None):

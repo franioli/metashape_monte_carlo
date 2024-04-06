@@ -1,3 +1,4 @@
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List
@@ -14,7 +15,7 @@ import plotly.io as pio
 import seaborn as sns
 from matplotlib import pyplot as plt
 
-from logger import setup_logger
+from metashapelib.logger import setup_logger
 from thirdparty import transformations as tf
 
 matplotlib.use("agg")
@@ -803,62 +804,7 @@ def main(
 
     logger.info("Done")
 
-    # try:
-    #     fig, axes = plt.subplots(3, 2, figsize=(10, 10))
-    #     # Plot standard hist and KDE deviation of coordinates
-    #     vct = cam_std.loc[:, ["X", "Y", "Z"]]
-    #     axes[0, 0] = sns.histplot(
-    #         data=cam_std,
-    #         x="x",
-    #         y="y",
-    #         z="z",
-    #         ax=axes[0, 0],
-    #         stat="density",
-    #         legend=True,
-    #     )
-    #     axes[0, 0].set_xlabel("Coordinate [m]")
-    #     axes[0, 0].set_ylabel("Frequency")
-    #     axes[0, 0].grid(True)
-    #     axes[0, 0].set_title("Histogram of Coordinates")
-    #     # axes[0, 0].legend(labels=["x", "y", "z"])
-    #     axes[1, 0] = sns.kdeplot(data=vct, fill=True, ax=axes[1, 0], legend=True)
-    #     axes[1, 0].set_xlabel("Coordinate [m]")
-    #     axes[1, 0].set_ylabel("Frequency")
-    #     axes[1, 0].grid(True)
-    #     axes[1, 0].set_title("KDE of Coordinates")
-    #     axes[1, 0].legend(labels=["x", "y", "z"])
-    #     axes[2, 0] = sns.boxplot(data=vct, ax=axes[2, 0], legend=True)
-    #     axes[2, 0].set_title("Boxplot of Coordinates")
-    #     axes[2, 0].set_xlabel("Axis")
-    #     axes[2, 0].set_ylabel("Standard Deviation [m]")
-    #     axes[2, 0].grid(True)
-    #     # Plot standard deviation hist and KDE of angles
-    #     vct = cam_std[:, 3:]
-    #     axes[0, 1] = sns.histplot(vct, stat="density", ax=axes[0, 1], legend=True)
-    #     axes[0, 1].set_xlabel("Angles [deg]")
-    #     axes[0, 1].set_ylabel("Density")
-    #     axes[0, 1].grid(True)
-    #     axes[0, 1].set_title("Histogram of Angles")
-    #     axes[0, 1].legend(labels=["yaw", "pitch", "roll"])
-    #     axes[1, 1] = sns.kdeplot(vct, fill=True, ax=axes[1, 1], legend=True)
-    #     axes[1, 1].set_xlabel("Angles [deg]")
-    #     axes[1, 1].set_ylabel("Density")
-    #     axes[1, 1].grid(True)
-    #     axes[1, 1].set_title("KDE of Angles")
-    #     axes[1, 1].legend(labels=["yaw", "pitch", "roll"])
-    #     axes[2, 1] = sns.boxplot(vct, ax=axes[2, 1])
-    #     axes[2, 1].set_xlabel("Axis")
-    #     axes[2, 1].set_ylabel("Standard Deviation [m]")
-    #     axes[2, 1].grid(True)
-    #     axes[1, 1].set_title("Boxplot of Angles")
-    #     plt.tight_layout()
-    #     fig.savefig(proj_dir / "camera_stats.png", dpi=300)
-    #     plt.close(fig)
-    # except Exception as e:
-    #     logger.error(f"Error plotting camera stats: {e}")
-
     # Load camera interior orientation
-    # NOTE: only works with single camera projects for now
     def read_cameraio_file(file: Path):
         prm = [
             "width",
@@ -887,54 +833,66 @@ def main(
 
     logger.info("Loading estimated camera interior orientation...")
     cam_io_files = sorted((proj_dir / "Monte_Carlo_output").glob("*_cal*.xml"))
-    # file = cam_io_files[0]
-    camera_params = {}
-    for file in cam_io_files:
-        run = file.stem.split("_")[0]
-        camera_params[run] = read_cameraio_file(file)
-    logger.info("Done")
 
-    # Compute statistics for the camera interior orientation
-    logger.info("Computing statistics for the camera interior orientation...")
-    camera_params = pd.DataFrame(camera_params).T
-    camera_params = camera_params.dropna()
-    cams_std = camera_params.std()
-    cams_std.drop(["width", "height"], inplace=True)
+    # Separate the files based on the sensor number
+    num_sensors = max(
+        [int(re.findall(r"\d+", path.stem.split("_")[-1])[-1]) for path in cam_io_files]
+    )
+    sensors = {i: [] for i in range(1, num_sensors + 1)}
+    for path in cam_io_files:
+        # Extract the final number before the file extension
+        filename = path.stem
+        sensor_number = int(filename.split("_")[-1][-1])
+        sensors[sensor_number].append(path)
 
-    # Make barplot for each camera parameter
-    logger.info("Making plots...")
+    for sensor_id, files in sensors.items():
+        camera_params = {}
+        for file in files:
+            run = file.stem.split("_")[0]
+            camera_params[run] = read_cameraio_file(file)
+        logger.info("Done")
 
-    # Determine the number of rows and columns for the subplot grid
-    n_params = len(cams_std)
-    n_cols = min(n_params, 3)  # Maximum of 3 columns
-    n_rows = (n_params - 1) // n_cols + 1
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 5 * n_rows))
-    # Ensure axes is a 2D array even if only one row or column is present
-    if n_rows == 1:
-        axes = np.expand_dims(axes, axis=0)
-    if n_cols == 1:
-        axes = np.expand_dims(axes, axis=1)
-    # Iterate over parameters and their standard deviations
-    for (param, val), ax in zip(cams_std.items(), axes.flatten()):
-        # sns.barplot(x=[param], y=[val], ax=ax)
-        ax.plot([param], [val], marker="o", linestyle="", markersize=8)
-        ax.set_xlabel("Camera Parameter")
-        ax.set_ylabel("Standard Deviation")
-        ax.set_title(f"Standard Deviation of {param}")
-    # Remove any unused subplots
-    for i in range(n_params, n_rows * n_cols):
-        axes.flatten()[i].remove()
-    plt.tight_layout()
-    fig.savefig(proj_dir / "camera_io_stats.png", dpi=300)
-    plt.close(fig)
+        # Compute statistics for the camera interior orientation
+        logger.info("Computing statistics for the camera interior orientation...")
+        camera_params = pd.DataFrame(camera_params).T
+        camera_params = camera_params.dropna()
+        cams_std = camera_params.std()
+        cams_std.drop(["width", "height"], inplace=True)
 
-    logger.info("Done")
+        # Make barplot for each camera parameter
+        logger.info("Making plots...")
+
+        # Determine the number of rows and columns for the subplot grid
+        n_params = len(cams_std)
+        n_cols = min(n_params, 3)  # Maximum of 3 columns
+        n_rows = (n_params - 1) // n_cols + 1
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 5 * n_rows))
+        # Ensure axes is a 2D array even if only one row or column is present
+        if n_rows == 1:
+            axes = np.expand_dims(axes, axis=0)
+        if n_cols == 1:
+            axes = np.expand_dims(axes, axis=1)
+        # Iterate over parameters and their standard deviations
+        for (param, val), ax in zip(cams_std.items(), axes.flatten()):
+            # sns.barplot(x=[param], y=[val], ax=ax)
+            ax.plot([param], [val], marker="o", linestyle="", markersize=8)
+            ax.set_xlabel("Camera Parameter")
+            ax.set_ylabel("Standard Deviation")
+            ax.set_title(f"Standard Deviation of {param}")
+        # Remove any unused subplots
+        for i in range(n_params, n_rows * n_cols):
+            axes.flatten()[i].remove()
+        plt.tight_layout()
+        fig.savefig(proj_dir / f"camera_{sensor_id}_interior.png", dpi=300)
+        plt.close(fig)
+
+        logger.info("Done")
 
 
 if __name__ == "__main__":
     proj_dir = Path("data/rossia/simulation_rossia_relative")
     proj_dir = Path("data/rossia/simulation_rossia_gcp_aat_test")
-    # proj_dir = Path("data/rossia/simulation_rossia_relative_10px")
+    proj_dir = Path("data/square/simulation_enrich_square")
     pcd_ext = "ply"
     compute_full_covariance = True
     use_dask = False
