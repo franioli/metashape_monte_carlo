@@ -2,6 +2,15 @@
 
 A library for extending Metashape functionalities.
 
+Current functionalities:
+
+- [x] Run Montecarlo simulation for estimating on-ground accuracy of a photogrammetric project.
+- [x] Functions for automatizing processing workflow
+- [x] Functions for importing and exporting data
+- [ ] Integration with [Deep-Image-Matching](https://github.com/3DOM-FBK/deep-image-matching)
+- [ ] Integration with other SfM software packages
+- [ ] Multitemporal processing with [ICEpy4D](https://github.com/franioli/icepy4d)
+- [ ] Other functionalities
 
 ## Use Metashape as external module
 
