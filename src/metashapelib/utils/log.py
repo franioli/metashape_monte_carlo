@@ -21,6 +21,13 @@ from datetime import date, datetime
 from pathlib import Path
 
 
+def getlogger(name: str = None, log_level: str = "info") -> logging.Logger:
+    logger = logging.getLogger(name)
+    log_level = logging.getLevelName(log_level.upper())
+    logger.setLevel(log_level)
+    return logger
+
+
 def change_logger_level(name: str = None, level: str = "warning"):
     logger = logging.getLogger(name)
     log_level = logging.getLevelName(level.upper())

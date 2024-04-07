@@ -3,7 +3,7 @@ from pathlib import Path
 import metashapelib as mslib
 import numpy as np
 
-logger = mslib.setup_logger(name="metashapelib", log_level="DEBUG")
+logger = mslib.getlogger(name="metashapelib", log_level="DEBUG")
 NaN = np.nan
 
 # Directory where output will be stored and active control file is saved.
@@ -14,10 +14,12 @@ ref_project_path = "data/belv_stereo/2022-07-22_14-02-41.psx"
 simu_name = "stereo_simu"
 
 # Define how many times bundle adjustment (Metashape 'optimisation') will be carried out.
-num_randomisations = 20
-run_parallel = True
-workers = 5
+num_randomisations = 100
+
+# Run the Monte Carlo simulation in parallel
 # NOTE: Keep the number of workers low if are running on a single CPU as the Metashape bundle adjustment is already multi-threaded and will use all available cores. If this is set too high, it will slow down the simulation and some runs may stuck.
+run_parallel = True
+workers = 10
 
 # Resume the Monte Carlo simulation from a specific run number. Set to -1 to start a new simulation.
 resume_sumulations_from = -1

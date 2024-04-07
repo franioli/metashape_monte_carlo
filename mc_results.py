@@ -7,6 +7,7 @@ import dask
 import dask.array as da
 import laspy
 import matplotlib
+import metashapelib as mslib
 import numpy as np
 import open3d as o3d
 import pandas as pd
@@ -15,13 +16,12 @@ import plotly.io as pio
 import seaborn as sns
 from matplotlib import pyplot as plt
 
-from metashapelib.utils.log import setup_logger
 from thirdparty import transformations as tf
 
 matplotlib.use("agg")
 
 
-logger = setup_logger(name="MC", log_level="INFO")
+logger = mslib.getlogger(name="metashapelib", log_level="DEBUG")
 
 
 def load_pcd(pcd_path: Path) -> np.ndarray:
