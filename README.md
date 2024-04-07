@@ -1,6 +1,7 @@
-# Metashape scripts
+# Metashapelib
 
-Sandbox for metashape scripts.
+A library for extending Metashape functionalities.
+
 
 ## Use Metashape as external module
 
