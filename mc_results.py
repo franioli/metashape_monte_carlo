@@ -1,5 +1,6 @@
 import re
 import xml.etree.ElementTree as ET
+from copy import deepcopy
 from pathlib import Path
 from typing import List
 
@@ -14,14 +15,17 @@ import pandas as pd
 import plotly.graph_objs as go
 import plotly.io as pio
 import seaborn as sns
+import stack_data
 from matplotlib import pyplot as plt
+from numba import njit
+from scipy.spatial import KDTree
 
 from thirdparty import transformations as tf
 
-matplotlib.use("agg")
+matplotlib.use("qt5agg")
 
 
-logger = mslib.getlogger(name="metashapelib", log_level="DEBUG")
+logger = mslib.getlogger(name="metashapelib", log_level="INFO")
 
 
 def load_pcd(pcd_path: Path) -> np.ndarray:
@@ -529,14 +533,11 @@ def main(
 
     # Read reference point cloud from MC simulation
     ref_pcd_path = pcd_dir.parent / "sparse_pts_reference.ply"
-    if ref_pcd_path.exists():
-        ref_pcd = load_pcd(ref_pcd_path)
-        logger.info(f"Loaded reference pointcloud from {ref_pcd_path}")
-    else:
-        ref_pcd = load_pcd(pcd_list[0])
-        logger.info(
-            "Reference pointcloud not found, using first pointcloud as reference"
-        )
+    if not ref_pcd_path.exists():
+        raise FileNotFoundError(f"Reference pointcloud not found at {ref_pcd_path}")
+
+    ref_pcd = load_pcd(ref_pcd_path)
+    logger.info(f"Loaded reference pointcloud from {ref_pcd_path}")
 
     # Build a lazy dask array of all pointclouds
     stack = lazy_load_pcd_stack(pcd_list)
@@ -574,6 +575,60 @@ def main(
         except MemoryError:
             logger.error("Not enough memory to compute full covariance matrix")
             skip_cov = True
+
+        logger.info("compute nd covariance matrix for each point..")
+
+        @njit
+        def compute_full_covariance(stack):
+            # Rearrage the observation in the stack to be in the form
+            # (n_randomizations, n_neighbors*3, 1)
+            # rand| observation
+            # 0   [ x1 y1 z1 x2 y2 z2 ...
+            # 1     x1 y1 z1 x2 y2 z2 ...
+            # 2     x1 y1 z1 x2 y2 z2 ...
+            # ...]
+            n_points = stack.shape[1]
+            pt_stack = stack.reshape(-1, n_points * 3)
+
+            # The full covariance matrix has shape (n_points*3, n_points*3)
+            cov = np.cov(pt_stack, rowvar=False, ddof=cov_ddof)
+
+            return cov
+
+        def compute_neighbour_covariance(stack, neigbors_idx):
+            # Extract the points from the stack
+            pt_stack = stack[:, neigbors_idx, :]
+
+            # Rearrage the observation in the stack to be in the form
+            # (n_randomizations, n_neighbors*3, 1)
+            # rand| observation
+            # 0   [ x1 y1 z1 x2 y2 z2 ...
+            # 1     x1 y1 z1 x2 y2 z2 ...
+            # 2     x1 y1 z1 x2 y2 z2 ...
+            # ...]
+            n_neighbors = neigbors_idx.shape[0]
+            pt_stack = pt_stack.reshape(-1, n_neighbors * 3)
+
+            # Compute the full covariance matrix
+            # It has shape (n_neighbors*3, n_neighbors*3)
+            cov = np.cov(pt_stack, rowvar=False, ddof=cov_ddof)
+
+            return cov
+
+        logger.info("Computing full covariance matrix...")
+        covfull = compute_full_covariance(deepcopy(stack))
+        logger.info("Done")
+
+        # logger.info("Building KDTree for reference point cloud...")
+        # kdtree = KDTree(ref_pcd)
+        # logger.info("Done")
+
+        # neighbors = 9
+        # radius = None
+        # pt = ref_pcd[0]
+        # _, idx = kdtree.query(pt, k=neighbors)
+        # cov0 = compute_neighbour_covariance(stack, neigbors_idx=idx)
+
     else:
         skip_cov = True
     logger.info("Done")
@@ -622,15 +677,15 @@ def main(
     # Make a 2D precision plot
     logger.info("Making precision plots...")
     scale_fct = 1e3
-    # clim_quantile = 0.95
-    # clim = [
-    #     (
-    #         np.floor(np.quantile(std[:, i], 1 - clim_quantile) * scale_fct / 2) * 2,
-    #         np.ceil(np.quantile(std[:, i], clim_quantile) * scale_fct / 2) * 2,
-    #     )
-    #     for i in range(3)
-    # ]
-    clim = [(0, 30), (0, 30), (0, 100)]
+    clim_quantile = 0.95
+    clim = [
+        (
+            np.floor(np.quantile(std[:, i], 1 - clim_quantile) * scale_fct / 2) * 2,
+            np.ceil(np.quantile(std[:, i], clim_quantile) * scale_fct / 2) * 2,
+        )
+        for i in range(3)
+    ]
+    # clim = [(0, 30), (0, 30), (0, 100)]
     make_precision_plot(
         mean[:, 0],
         mean[:, 1],
@@ -890,9 +945,9 @@ def main(
 
 
 if __name__ == "__main__":
-    proj_dir = Path("data/rossia/simulation_rossia_relative")
-    proj_dir = Path("data/rossia/simulation_rossia_gcp_aat_test")
-    proj_dir = Path("data/square/simulation_enrich_square")
+    # proj_dir = Path("data/rossia/simulation_rossia_relative")
+    # proj_dir = Path("data/rossia/simulation_rossia_gcp_aat_test")
+    proj_dir = Path("data/belv_stereo/stereo_simu")
     pcd_ext = "ply"
     compute_full_covariance = True
     use_dask = False
