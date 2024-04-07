@@ -15,7 +15,7 @@ import plotly.io as pio
 import seaborn as sns
 from matplotlib import pyplot as plt
 
-from metashapelib.logger import setup_logger
+from metashapelib.utils.log import setup_logger
 from thirdparty import transformations as tf
 
 matplotlib.use("agg")

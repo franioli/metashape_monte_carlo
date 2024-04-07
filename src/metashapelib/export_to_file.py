@@ -2,7 +2,7 @@ import math
 
 import Metashape
 
-from .utils import backward_compatibility
+backward_compatibility = Metashape.app.version < "2.0"
 
 
 def save_sparse(

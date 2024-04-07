@@ -1,29 +1,27 @@
 import csv
+import logging
 import math
 import shutil
-from multiprocessing import Pool
 from pathlib import Path
 from typing import Dict, List, Union
 
 import Metashape
 import numpy as np
+from joblib import Parallel, delayed
+
 from metashapelib.montecarlo import mc_utils
-from metashapelib import utils as ms_utils
-from metashapelib import workflow as ms_workflow
-from metashapelib.logger import setup_logger
+from metashapelib.workflow import expand_region, optimize_cameras, save_project
 
-logger = setup_logger(name="MC", log_level="DEBUG")
+logger = logging.getLogger("metashapelib")
 
-if not ms_utils.check_license():
-    raise Exception(
-        "No licence found. Please check that you linked your license (floating or standalone) wih the Metashape python module."
-    )
-backward_compatibility = ms_utils.backward_compatibility()
+backward_compatibility = Metashape.app.version < "2.0"
 
-NaN = float("NaN")
+NaN = np.nan
 
 # NOTE: Currentely, you MUST use psz as the extension for the simulation project files. This is because Metashape do not allow to overwrite the image coordinats of the tie points with the standard .psx extension. This is probably a limitation of the Metashape API.
 metashape_simu_ext = "psz"
+
+# Default camera parameters to optimise in the bundle adjustment
 default_intrinsics_optim = dict = {
     "f": True,
     "cx": True,
@@ -38,6 +36,89 @@ default_intrinsics_optim = dict = {
     "p2": True,
     "tiepoint_covariance": True,
 }
+
+
+def run_simulation(
+    project_path: Path,
+    num_randomisations: int,
+    simu_dir: Path = None,
+    run_parallel: bool = False,
+    workers: int = 10,
+    resume_sumulations_from: int = -1,
+    optimise_intrinsics: Dict = default_intrinsics_optim,
+    pts_offset: Union[List, np.ndarray, Metashape.Vector] = [NaN, NaN, NaN],
+):
+    """
+    Conducts a Monte Carlo simulation on a given project.
+
+    This function opens a reference project, copies it, and then performs a series of operations on the copy, including bundle adjustment, exporting sparse point clouds, and adding Gaussian noise. The simulation can be run in parallel or sequentially, and the results are saved in a specified directory.
+
+    Args:
+        dir_path (str): The directory path where the project is located and where the results will be saved.
+        project_name (str): The name of the project on which the simulation will be conducted.
+        num_randomisations (int): The number of randomisations to be performed in the simulation.
+        run_parallel (bool, optional): Whether to run the simulation in parallel. Defaults to False.
+        workers (int, optional): The number of parallel processes to use if run_parallel is True. Defaults to 10.
+        optimise_intrinsics (Dict, optional): The parameters for camera optimization. Defaults to default_intrinsics_optim.
+        pts_offset (Metashape.Vector, optional): The offset for point coordinates. Defaults to Metashape.Vector([NaN, NaN, NaN]).
+
+    Returns:
+        None
+    """
+    project_path = Path(project_path)
+    if not project_path.exists():
+        raise FileNotFoundError(f"File {project_path} does not exist.")
+    if not project_path.suffix == ".psx":
+        raise ValueError(f"File {project_path} is not a Metashape project file.")
+    if not isinstance(pts_offset, Metashape.Vector):
+        pts_offset = Metashape.Vector(pts_offset)
+
+    # If the resume_sumulations_from counter is negative, initialise the simulation. If it is positive, skip it and resume the simulation from the specified run number.
+    if resume_sumulations_from < 0:
+        initialise_simulation(
+            project_path=project_path,
+            simu_dir=simu_dir,
+            pts_offset=pts_offset,
+            optimise_intrinsics=optimise_intrinsics,
+            skip_optimisation=True,
+        )
+
+    # Check the initialisation of the simulation
+    if not check_initialisation(simu_dir):
+        raise RuntimeError("Cannot resume simulation. Initialisation failed.")
+    logger.info(
+        f"Resuming Monte Carlo simulation from run {resume_sumulations_from}..."
+    )
+
+    # Reset the resume_sumulations_from counter to zero if it is negative
+    if resume_sumulations_from < 0:
+        resume_sumulations_from = 0
+
+    # Create the iterable with the parameters of each run
+    randomisation = range(resume_sumulations_from, num_randomisations)
+    act_num_randomisations = num_randomisations - resume_sumulations_from
+    iterable_parms = zip(
+        randomisation,
+        [simu_dir] * act_num_randomisations,
+        [optimise_intrinsics] * act_num_randomisations,
+        [list(pts_offset)] * act_num_randomisations,
+    )
+
+    # Run the simulationsparse_pts_reference_cov
+    logger.info("Starting Monte Carlo simulation...")
+    if run_parallel:
+        with Parallel(n_jobs=workers) as parallel:
+            results = parallel(
+                delayed(run_iteration)(param) for param in iterable_parms
+            )
+            logger.info("Succeeded iterations:")
+
+    else:
+        results = list(map(run_iteration, iterable_parms))
+
+    logger.info("Simulation completed.")
+
+    return results
 
 
 def initialise_simulation(
@@ -73,7 +154,7 @@ def initialise_simulation(
     ref_doc = Metashape.Document()
     ref_doc.open(str(ref_project_path))
     doc = ref_doc.copy()
-    ms_workflow.save_project(doc, path=project_path)
+    save_project(doc, path=project_path)
 
     # Close the reference document
     ref_doc.read_only = False
@@ -104,12 +185,12 @@ def initialise_simulation(
         pts_offset = mc_utils.compute_coordinate_offset(original_chunk)
 
     # Expand region to include all possible points
-    ms_workflow.expand_region(original_chunk, 1.5)
+    expand_region(original_chunk, 1.5)
 
     # Carry out an initial bundle adjustment to ensure that everything subsequent has a consistent reference starting point.
     if not skip_optimisation:
         logger.info("Optimising cameras...")
-        ms_workflow.optimize_cameras(original_chunk, optimise_intrinsics)
+        optimize_cameras(original_chunk, optimise_intrinsics)
 
     # Save the sparse point cloud as text file including colour and covariance
     # NOTE: disabled for now
@@ -167,7 +248,7 @@ def initialise_simulation(
         )
 
     # Save the project
-    ms_workflow.save_project(doc)
+    save_project(doc)
 
     # Clean up the output directory and create a new one
     logger.info("Creating and cleaning up output directory...")

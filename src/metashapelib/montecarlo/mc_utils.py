@@ -2,17 +2,16 @@ import csv
 import math
 import os
 import random
+from re import M
 
 import Metashape
 import numpy as np
 from tqdm import tqdm
 
-from metashapelib import backward_compatibility
+backward_compatibility = Metashape.app.version < "2.0"
 
 # Reset the random seed, so that all equivalent runs of this script are started identically
 # random.seed(1)
-
-
 rng = np.random.default_rng()
 
 
@@ -39,8 +38,7 @@ def vector_to_cov(cov_vector):
 
 
 def get_ms_tie_points(chunk: Metashape.Chunk):
-    backward = backward_compatibility()
-    if not backward:
+    if not backward_compatibility:
         return chunk.tie_points
     else:
         return chunk.point_cloud
@@ -476,7 +474,7 @@ def add_observations_gauss_noise(chunk: Metashape.Chunk):
                     random.gauss(0, marker_proj_stdev),
                 ]
             )
-            if backward_compatibility():
+            if backward_compatibility:
                 marker.projections[camera].coord += noise
             else:
                 marker.projections[camera].coord.x += noise[0]

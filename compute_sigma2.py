@@ -2,8 +2,9 @@ from pathlib import Path
 
 import Metashape
 import numpy as np
-from metashapelib.utils import backward_compatibility
 from metashapelib.workflow import optimize_cameras
+
+backward_compatibility = Metashape.app.version < "2.0"
 
 
 def get_ms_tie_points(chunk: Metashape.Chunk):

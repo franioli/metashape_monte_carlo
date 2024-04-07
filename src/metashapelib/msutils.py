@@ -3,31 +3,6 @@ from typing import Union
 import Metashape
 import numpy as np
 
-""" License and version"""
-
-
-def check_license() -> bool:
-    if Metashape.app.activated:
-        print("Metashape is activated: ", Metashape.app.activated)
-        return True
-    else:
-        print(
-            "No licence found. Please check that you linked your license (floating or standalone) wih the Metashape python module."
-        )
-        return False
-
-
-def get_version() -> str:
-    return Metashape.app.version
-
-
-def backward_compatibility() -> bool:
-    if get_version() < "2.0":
-        return True
-    else:
-        return False
-
-
 """ Get objects"""
 
 

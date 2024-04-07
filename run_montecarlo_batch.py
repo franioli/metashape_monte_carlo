@@ -2,12 +2,12 @@ import logging
 from pathlib import Path
 
 import Metashape
+import metashapelib as mslib
+import numpy as np
 
 import mc_results
 
-from .montecarlo import montecarlo_simulation
-
-NaN = float("NaN")
+NaN = np.nan
 logging.basicConfig(level=logging.INFO)
 
 project_dir = "data/rossia"
@@ -35,7 +35,7 @@ pts_offset = Metashape.Vector([0.0, 0.0, 0.0])
 
 for project_path in project_paths:
     simu_dir = project_path / f"simulation_{project_path.stem}"
-    montecarlo_simulation(
+    mslib.montecarlo.run_simulation(
         project_path=project_path,
         simu_dir=simu_dir,
         num_randomisations=num_randomisations,

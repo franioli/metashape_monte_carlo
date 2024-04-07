@@ -22,16 +22,14 @@ dependencies = [
     "pillow",
     "pandas",
     "opencv-python",
-    "h5py",
     "tqdm",
-    "easydict",
-    "exifread",
+    "joblib",
 ]
 requires-python = ">=3.8"
 
 
 [project.optional-dependencies]
-dev = ["ruff", "black", "bumpver", "isort", "pip-tools", "pytest", "bumpver", "mkdocs", "mkdocs-material", "mkdocstrings[python]"]
+dev = ["ruff", "black", "bumpver", "isort", "pip-tools", "pytest", "bumpver", "mkdocs", "mkdocs-material", "mkdocstrings[python]", "pre-commit"]
 
 [project.urls]    
     Homepage = "https://github.com/3DOM-FBK/deep-image-matching"
