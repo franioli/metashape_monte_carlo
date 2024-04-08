@@ -13,7 +13,7 @@ def save_sparse(
     sep: str = ",",
     header: bool = True,
 ):
-    if not backward_compatibility():
+    if not backward_compatibility:
         tie_points = chunk.tie_points
     else:
         tie_points = chunk.point_cloud

@@ -8,13 +8,13 @@ NaN = np.nan
 
 # Directory where output will be stored and active control file is saved.
 # The files will be generated in a sub-folder named "Monte_Carlo_output"
-# ref_project_path = "data/rossia/rossia_gcp_aat.psx"
-# simu_name = "simulation_test"
-ref_project_path = "data/belv_stereo/2022-07-22_14-02-41.psx"
-simu_name = "stereo_simu"
+ref_project_path = "data/rossia/rossia_gcp_aat_.psx"
+simu_name = "simulation_rossia_gcp_aat"
+# ref_project_path = "data/belv_stereo/2022-07-22_14-02-41.psx"
+# simu_name = "stereo_simu"
 
 # Define how many times bundle adjustment (Metashape 'optimisation') will be carried out.
-num_randomisations = 100
+num_randomisations = 1000
 
 # Run the Monte Carlo simulation in parallel
 # NOTE: Keep the number of workers low if are running on a single CPU as the Metashape bundle adjustment is already multi-threaded and will use all available cores. If this is set too high, it will slow down the simulation and some runs may stuck.

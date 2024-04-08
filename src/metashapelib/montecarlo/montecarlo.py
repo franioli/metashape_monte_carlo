@@ -9,6 +9,7 @@ import Metashape
 import numpy as np
 from joblib import Parallel, delayed
 
+from metashapelib.export import save_sparse
 from metashapelib.montecarlo import mc_utils
 from metashapelib.workflow import expand_region, optimize_cameras, save_project
 
@@ -245,6 +246,13 @@ def initialise_simulation(
             format=Metashape.PointCloudFormatPLY,
             crs=crs,
             shift=pts_offset,
+        )
+        save_sparse(
+            zero_error_chunk,
+            str(simu_dir / "sparse_pts_reference_cov.csv"),
+            save_color=True,
+            save_cov=True,
+            sep=",",
         )
 
     # Save the project

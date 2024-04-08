@@ -1,12 +1,10 @@
 import re
 import xml.etree.ElementTree as ET
-from copy import deepcopy
 from pathlib import Path
 from typing import List
 
 import dask
 import dask.array as da
-import laspy
 import matplotlib
 import metashapelib as mslib
 import numpy as np
@@ -15,8 +13,14 @@ import pandas as pd
 import plotly.graph_objs as go
 import plotly.io as pio
 import seaborn as sns
-import stack_data
 from matplotlib import pyplot as plt
+from metashapelib.montecarlo.read_results import (
+    lazy_load_pcd_stack,
+    load_pcd,
+    load_pcd_stack,
+    write_pcd_las,
+)
+from metashapelib.utils import rmse
 from numba import njit
 from scipy.spatial import KDTree
 
@@ -26,125 +30,6 @@ matplotlib.use("qt5agg")
 
 
 logger = mslib.getlogger(name="metashapelib", log_level="INFO")
-
-
-def load_pcd(pcd_path: Path) -> np.ndarray:
-    return np.asarray(o3d.io.read_point_cloud(str(pcd_path)).points).astype(np.float32)
-
-
-def write_pcd(
-    xyz: np.ndarray,
-    path: Path,
-) -> bool:
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(xyz)
-    o3d.io.write_point_cloud(str(path), pcd)
-    return True
-
-
-def lazy_load_pcd_stack(pcd_list):
-    # load_pcd the first pcd (assume rest are same shape/dtype)
-    sample = load_pcd(pcd_list[0])
-
-    # Build a list of lazy dask arrays
-    arrays = [
-        da.from_delayed(
-            dask.delayed(load_pcd)(path),
-            dtype=sample.dtype,
-            shape=sample.shape,
-        )
-        for path in pcd_list
-    ]
-    # Stack all point coordinates into a 3D dask array
-    stack = da.stack(arrays, axis=0)
-    stack = stack.rechunk()
-    return stack
-
-
-def load_pcd_stack(pcd_list):
-    arrays = [load_pcd(path) for path in pcd_list]
-    stack = np.stack(arrays, axis=0)
-    return stack
-
-
-def write_pcd_las(
-    path: Path,
-    x: np.ndarray,
-    y: np.ndarray,
-    z: np.ndarray,
-    rgb: np.ndarray = None,
-    offset=np.array([0.0, 0.0, 0.0]),
-    precision: float = 1e-5,
-    **kwargs,
-) -> bool:
-    """
-    Write point cloud data to a LAS file.
-
-    Args:
-        path (Path): The path to save the LAS file.
-        x (np.ndarray): Array of x-coordinates of the points.
-        y (np.ndarray): Array of y-coordinates of the points.
-        z (np.ndarray): Array of z-coordinates of the points.
-        rgb (np.ndarray, optional): Array of RGB values for each point. Must be a 3xn numpy array of 16-bit unsigned integers. Defaults to None.
-        offset (np.ndarray, optional): Offset to be added to the coordinates.Defaults to np.array([0.0, 0.0, 0.0]).
-        precision (float, optional): Precision of the coordinates. Defaults to 1e-5.
-        **kwargs: Additional keyword arguments to be written as extra scalar fields in the LAS file.
-
-    Returns:
-        bool: True if writing to the LAS file is successful, False otherwise.
-
-    Raises:
-        TypeError: If the rgb argument is not a 3xn numpy array of 16-bit unsigned integers.
-
-    Note:
-        - If the path does not end with '.las', '.las' will be appended to the file name.
-        - If the rgb argument is provided, it must be a 3xn numpy array of 16-bit unsigned integers.
-        - The header of the LAS file will be set to version "1.4" and point format "2".
-        - Additional keyword arguments (**kwargs) will be written as extra scalar fields in the LAS file.
-    """
-    path = Path(path)
-    if path.suffix != ".las":
-        path = path.parent / (path.name + ".las")
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    if rgb is not None:
-        if not isinstance(rgb, np.ndarray) or rgb.shape[1] != 3:
-            raise TypeError(
-                "Inval rgb argument. It must a 3xn numpy array of 16bit unsigned int"
-            )
-        if rgb.dtype == np.uint8:
-            rgb = rgb.astype(np.uint16)
-        elif rgb.dtype != np.uint16:
-            raise TypeError(
-                "Inval rgb argument. It must a 3xn numpy array of 16bit unsigned int"
-            )
-
-    header = laspy.LasHeader(version="1.4", point_format=3)
-    header.add_extra_dims(
-        [laspy.ExtraBytesParams(k, type=np.float32) for k in kwargs.keys()]
-    )
-    header.offsets = offset
-    header.scales = [
-        precision for _ in range(3)
-    ]  # This is the precision of the coordinates
-
-    with laspy.open(path, mode="w", header=header) as writer:
-        point_record = laspy.ScaleAwarePointRecord.zeros(x.shape[0], header=header)
-        point_record.x = x.astype(np.float32)
-        point_record.y = y.astype(np.float32)
-        point_record.z = z.astype(np.float32)
-        if rgb is not None:
-            point_record.red = rgb[:, 0]
-            point_record.green = rgb[:, 1]
-            point_record.blue = rgb[:, 2]
-
-        for k, v in kwargs.items():
-            setattr(point_record, k, v)
-
-        writer.write_points(point_record)
-
-    return True
 
 
 def make_2D_scatter_plot(
@@ -357,25 +242,11 @@ def make_precision_plot(
             y,
             z,
             (sx**2 + sy**2 + sz**2) ** 0.5 * scale_fct,
-            markersize=point_size,
+            markersize=point_size * 2,
             out_path=out_path.parent / (out_path.stem + ".html"),
             title="3D Scatter Plot",
             colorbar_label="3D Standard Deviation",
         )
-
-
-def rmse(predicted: np.ndarray, reference: np.ndarray, axis: int = None) -> float:
-    """
-    Compute the root mean square error (RMSE) between two arrays.
-
-    Args:
-        predicted (np.ndarray): The predicted values.
-        reference (np.ndarray): The reference values.
-
-    Returns:
-        float: The RMSE between the predicted and target values.
-    """
-    return np.sqrt(np.mean((predicted - reference) ** 2, axis=axis))
 
 
 def compute_statistics(
@@ -516,6 +387,95 @@ def make_doming_plot(data: pd.DataFrame, fig_path: Path, print_stats: bool = Fal
     plt.close(fig)
 
 
+def load_and_compute_stack_stats(
+    pcd_list,
+    ref_pcd: np.ndarray,
+    use_dask: bool = False,
+    cov_ddof: int = None,
+):
+    # TODO: IMPROVE THIS FUNCTION
+    if use_dask:
+        # Build a lazy dask array of all pointclouds
+        stack = lazy_load_pcd_stack(pcd_list)
+        operations = [
+            stack.mean(axis=0),
+            stack.std(axis=0, ddof=cov_ddof),
+            rmse(stack, ref_pcd, axis=0),
+        ]
+        mean, std, rms = dask.compute(*operations)
+    else:
+        stack = load_pcd_stack(pcd_list)
+        mean = np.mean(stack, axis=0)
+        std = np.std(stack, axis=0, ddof=cov_ddof)
+        rms = rmse(stack, ref_pcd, axis=0)
+    return stack, mean, std, rms
+
+
+@njit
+def compute_full_covariance_mat(stack, cov_ddof=1):
+    # Rearrage the observation in the stack to be in the form
+    # (n_randomizations, n_neighbors*3, 1)
+    # rand| observation
+    # 0   [ x1 y1 z1 x2 y2 z2 ...
+    # 1     x1 y1 z1 x2 y2 z2 ...
+    # 2     x1 y1 z1 x2 y2 z2 ...
+    # ...]
+    n_points = stack.shape[1]
+    pt_stack = stack.reshape(-1, n_points * 3)
+
+    # The full covariance matrix has shape (n_points*3, n_points*3)
+    cov = np.cov(pt_stack, rowvar=False, ddof=cov_ddof)
+
+    return cov
+
+
+def compute_neighbour_covariance(stack, neigbors_idx, cov_ddof=1):
+    # Extract the points from the stack
+    pt_stack = stack[:, neigbors_idx, :]
+
+    # Rearrage the observation in the stack to be in the form
+    # (n_randomizations, n_neighbors*3, 1)
+    # rand| observation
+    # 0   [ x1 y1 z1 x2 y2 z2 ...
+    # 1     x1 y1 z1 x2 y2 z2 ...
+    # 2     x1 y1 z1 x2 y2 z2 ...
+    # ...]
+    n_neighbors = neigbors_idx.shape[0]
+    pt_stack = pt_stack.reshape(-1, n_neighbors * 3)
+
+    # Compute the full covariance matrix
+    # It has shape (n_neighbors*3, n_neighbors*3)
+    cov = np.cov(pt_stack, rowvar=False, ddof=cov_ddof)
+
+    return cov
+
+
+def read_calibration_file(file: Path):
+    """Extract calibration parameters from the XML file"""
+    prm = ["width", "height", "f", "cx", "cy", "k1", "k2", "k3", "p1", "p2", "b1", "b2"]
+    tree = ET.parse(file)
+    root = tree.getroot()
+    params = {}
+    for p in prm:
+        if root.find(p) is not None:
+            params[p] = float(root.find(p).text)
+
+    return params
+
+
+def load_camera_file(file: Path):
+    data = pd.read_csv(file, delimiter=",", skiprows=1)
+    # Remove last row
+    data = data.iloc[:-1]
+    xyz = data.loc[:, ["X_est", "Y_est", "Z_est"]].values
+    if "Yaw_est" in data.columns:
+        angles = data.loc[:, ["Yaw_est", "Pitch_est", "Roll_est"]].values
+    elif "Omega_est" in data.columns:
+        angles = data.loc[:, ["Omega_est", "Phi_est", "Kappa_est"]].values
+    loc_prior = data.loc[:, ["X", "Y", "Z"]].values
+    return xyz, angles, loc_prior
+
+
 def main(
     proj_dir,
     pcd_ext: str = "ply",
@@ -539,29 +499,18 @@ def main(
     ref_pcd = load_pcd(ref_pcd_path)
     logger.info(f"Loaded reference pointcloud from {ref_pcd_path}")
 
-    # Build a lazy dask array of all pointclouds
-    stack = lazy_load_pcd_stack(pcd_list)
-
     # Load the data and compute the mean and std with dask
     logger.info("Computing mean and std and rmse of each point...")
-    if use_dask:
-        operations = [
-            stack.mean(axis=0),
-            stack.std(axis=0, ddof=cov_ddof),
-        ]
-        mean, std = dask.compute(*operations)
-    else:
-        # Load all the data into memory and compute the mean and std
-        stack = np.array([load_pcd(path) for path in pcd_list])
-        mean = np.mean(stack, axis=0)
-        std = np.std(stack, axis=0, ddof=cov_ddof)
-
-    # Computer Root mee square of the stack
-    rms = rmse(stack, ref_pcd, axis=0)
+    stack, mean, std, rms = load_and_compute_stack_stats(
+        pcd_list, ref_pcd, use_dask, cov_ddof
+    )
 
     # Compute full covariance matrix for each point (note that all the pcd are loaded in memory at once here!)
     if compute_full_covariance:
         logger.info("Computing covariance of each point..")
+        logger.warning(
+            "This operation is memory intensive as all the point clouds are loaded into RAM (it is not implemented with dask yet). It may take a while..."
+        )
         skip_cov = False
         try:
 
@@ -571,63 +520,24 @@ def main(
             if isinstance(stack, da.Array):
                 stack = np.array(stack)
             np_cov = [compute_covariance(stack[:, i, :]) for i in range(stack.shape[1])]
-            np.sqrt(np_cov[0].diagonal()) - std[0]
+
+            # logger.info("Computing full covariance matrix...")
+            # covfull = compute_full_covariance_mat(deepcopy(stack))
+            # logger.info("Done")
+
+            # logger.info("Building KDTree for reference point cloud...")
+            # kdtree = KDTree(ref_pcd)
+            # logger.info("Done")
+
+            # neighbors = 9
+            # radius = None
+            # pt = ref_pcd[0]
+            # _, idx = kdtree.query(pt, k=neighbors)
+            # cov0 = compute_neighbour_covariance(stack, neigbors_idx=idx)
+
         except MemoryError:
             logger.error("Not enough memory to compute full covariance matrix")
             skip_cov = True
-
-        logger.info("compute nd covariance matrix for each point..")
-
-        @njit
-        def compute_full_covariance(stack):
-            # Rearrage the observation in the stack to be in the form
-            # (n_randomizations, n_neighbors*3, 1)
-            # rand| observation
-            # 0   [ x1 y1 z1 x2 y2 z2 ...
-            # 1     x1 y1 z1 x2 y2 z2 ...
-            # 2     x1 y1 z1 x2 y2 z2 ...
-            # ...]
-            n_points = stack.shape[1]
-            pt_stack = stack.reshape(-1, n_points * 3)
-
-            # The full covariance matrix has shape (n_points*3, n_points*3)
-            cov = np.cov(pt_stack, rowvar=False, ddof=cov_ddof)
-
-            return cov
-
-        def compute_neighbour_covariance(stack, neigbors_idx):
-            # Extract the points from the stack
-            pt_stack = stack[:, neigbors_idx, :]
-
-            # Rearrage the observation in the stack to be in the form
-            # (n_randomizations, n_neighbors*3, 1)
-            # rand| observation
-            # 0   [ x1 y1 z1 x2 y2 z2 ...
-            # 1     x1 y1 z1 x2 y2 z2 ...
-            # 2     x1 y1 z1 x2 y2 z2 ...
-            # ...]
-            n_neighbors = neigbors_idx.shape[0]
-            pt_stack = pt_stack.reshape(-1, n_neighbors * 3)
-
-            # Compute the full covariance matrix
-            # It has shape (n_neighbors*3, n_neighbors*3)
-            cov = np.cov(pt_stack, rowvar=False, ddof=cov_ddof)
-
-            return cov
-
-        logger.info("Computing full covariance matrix...")
-        covfull = compute_full_covariance(deepcopy(stack))
-        logger.info("Done")
-
-        # logger.info("Building KDTree for reference point cloud...")
-        # kdtree = KDTree(ref_pcd)
-        # logger.info("Done")
-
-        # neighbors = 9
-        # radius = None
-        # pt = ref_pcd[0]
-        # _, idx = kdtree.query(pt, k=neighbors)
-        # cov0 = compute_neighbour_covariance(stack, neigbors_idx=idx)
 
     else:
         skip_cov = True
@@ -744,11 +654,7 @@ def main(
     # Create a las pcd with laspy
     logger.info("Writing pointclouds with point precision to LAS files...")
     rgb = np.uint16(np.asarray(o3d.io.read_point_cloud(str(ref_pcd_path)).colors) * 255)
-    scalar_fields = {
-        "sx": std[:, 0],
-        "sy": std[:, 1],
-        "sz": std[:, 2],
-    }
+    scalar_fields = {"sx": std[:, 0], "sy": std[:, 1], "sz": std[:, 2]}
     write_pcd_las(
         proj_dir / "point_precision.las",
         mean[:, 0],
@@ -799,18 +705,6 @@ def main(
     logger.info("Done")
 
     # Read cameras data
-    def load_camera_file(file: Path):
-        data = pd.read_csv(file, delimiter=",", skiprows=1)
-        # Remove last row
-        data = data.iloc[:-1]
-        xyz = data.loc[:, ["X_est", "Y_est", "Z_est"]].values
-        if "Yaw_est" in data.columns:
-            angles = data.loc[:, ["Yaw_est", "Pitch_est", "Roll_est"]].values
-        elif "Omega_est" in data.columns:
-            angles = data.loc[:, ["Omega_est", "Phi_est", "Kappa_est"]].values
-        loc_prior = data.loc[:, ["X", "Y", "Z"]].values
-        return xyz, angles, loc_prior
-
     logger.info("Loading estimated camera exterior orientation...")
     cam_files = sorted((proj_dir / "Monte_Carlo_output").glob("*_cams_c.txt"))
     coords, angles = {}, {}
@@ -860,32 +754,6 @@ def main(
     logger.info("Done")
 
     # Load camera interior orientation
-    def read_cameraio_file(file: Path):
-        prm = [
-            "width",
-            "height",
-            "f",
-            "cx",
-            "cy",
-            "k1",
-            "k2",
-            "k3",
-            "p1",
-            "p2",
-            "b1",
-            "b2",
-        ]
-
-        # Extract calibration parameters from the XML file
-        tree = ET.parse(file)
-        root = tree.getroot()
-        params = {}
-        for p in prm:
-            if root.find(p) is not None:
-                params[p] = float(root.find(p).text)
-
-        return params
-
     logger.info("Loading estimated camera interior orientation...")
     cam_io_files = sorted((proj_dir / "Monte_Carlo_output").glob("*_cal*.xml"))
 
@@ -904,7 +772,7 @@ def main(
         camera_params = {}
         for file in files:
             run = file.stem.split("_")[0]
-            camera_params[run] = read_cameraio_file(file)
+            camera_params[run] = read_calibration_file(file)
         logger.info("Done")
 
         # Compute statistics for the camera interior orientation
@@ -946,17 +814,15 @@ def main(
 
 if __name__ == "__main__":
     # proj_dir = Path("data/rossia/simulation_rossia_relative")
-    # proj_dir = Path("data/rossia/simulation_rossia_gcp_aat_test")
-    proj_dir = Path("data/belv_stereo/stereo_simu")
+    proj_dir = Path("data/rossia/simulation_rossia_gcp_aat")
+    # proj_dir = Path("data/belv_stereo/stereo_simu")
     pcd_ext = "ply"
     compute_full_covariance = True
-    use_dask = False
-    cov_ddof = 1
+    use_dask = True
 
     main(
         proj_dir,
         pcd_ext=pcd_ext,
         use_dask=use_dask,
         compute_full_covariance=compute_full_covariance,
-        cov_ddof=cov_ddof,
     )
