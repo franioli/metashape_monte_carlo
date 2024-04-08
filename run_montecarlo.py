@@ -1,4 +1,6 @@
+import re
 from pathlib import Path
+from weakref import ref
 
 import metashapelib as mslib
 import numpy as np
@@ -8,8 +10,8 @@ NaN = np.nan
 
 # Directory where output will be stored and active control file is saved.
 # The files will be generated in a sub-folder named "Monte_Carlo_output"
-ref_project_path = "data/rossia/rossia_gcp_aat_.psx"
-simu_name = "simulation_rossia_gcp_aat"
+ref_project_path = Path("data/rossia/rossia_gcp_aat_io_fixed.psx")
+simu_name = f"simulation_{ref_project_path.stem}"
 # ref_project_path = "data/belv_stereo/2022-07-22_14-02-41.psx"
 # simu_name = "stereo_simu"
 
