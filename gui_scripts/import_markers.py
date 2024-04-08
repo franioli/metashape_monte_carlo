@@ -1,3 +1,5 @@
+# This script imports GCPs from a CSV file into a Metashape project.
+# The CSV file should have the following format:
 # image_name, gcp_name, image_u, image_v
 # IMG_0001.JPG,point 1,100,200
 # IMG_0001.JPG,point 2,345,400
@@ -21,7 +23,7 @@ def getCamera(chunk, label):
 
 
 def main():
-    path = Metashape.app.getOpenFileName("Select output folder:")
+    path = Metashape.app.getOpenFileName("Select file with marker image coordinates:")
 
     chunk = Metashape.app.document.chunk
 
@@ -47,4 +49,4 @@ def main():
         print(f"Added projection for {m_label} on {c_label}")
 
 
-Metashape.app.addMenuItem("Scripts/import GCPs", main)
+Metashape.app.addMenuItem("Scripts/Import markers images", main)

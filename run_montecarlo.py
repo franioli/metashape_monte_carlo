@@ -1,6 +1,4 @@
-import re
 from pathlib import Path
-from weakref import ref
 
 import metashapelib as mslib
 import numpy as np
@@ -10,18 +8,17 @@ NaN = np.nan
 
 # Directory where output will be stored and active control file is saved.
 # The files will be generated in a sub-folder named "Monte_Carlo_output"
-ref_project_path = Path("data/rossia/rossia_gcp_aat_io_fixed.psx")
-simu_name = f"simulation_{ref_project_path.stem}"
-# ref_project_path = "data/belv_stereo/2022-07-22_14-02-41.psx"
-# simu_name = "stereo_simu"
+project_dir = Path("/mnt/phd/metashapelib/data/belv_stereo/").resolve()
+ref_project_path = project_dir / "2022-07-28_15-02-49.psx"
+simu_name = f"simulation_{ref_project_path.stem}_allioest"
 
 # Define how many times bundle adjustment (Metashape 'optimisation') will be carried out.
-num_randomisations = 1000
+num_randomisations = 400
 
 # Run the Monte Carlo simulation in parallel
 # NOTE: Keep the number of workers low if are running on a single CPU as the Metashape bundle adjustment is already multi-threaded and will use all available cores. If this is set too high, it will slow down the simulation and some runs may stuck.
 run_parallel = True
-workers = 10
+workers = 12
 
 # Resume the Monte Carlo simulation from a specific run number. Set to -1 to start a new simulation.
 resume_sumulations_from = -1
@@ -35,10 +32,10 @@ optimise_intrinsics = {
     "b2": False,
     "k1": True,
     "k2": True,
-    "k3": True,
+    "k3": False,
     "k4": False,
-    "p1": False,
-    "p2": False,
+    "p1": True,
+    "p2": True,
     "tiepoint_covariance": True,
 }
 

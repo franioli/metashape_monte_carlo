@@ -6,6 +6,7 @@ test_projects/
 *.files
 *.ply
 data/
+data*
 thirdparty/riccardo
 sandbox/
 

@@ -26,7 +26,7 @@ from scipy.spatial import KDTree
 
 from thirdparty import transformations as tf
 
-matplotlib.use("qt5agg")
+matplotlib.use("agg")
 
 
 logger = mslib.getlogger(name="metashapelib", log_level="INFO")
@@ -488,14 +488,15 @@ def main(
 
     # Get pcd list
     pcd_dir = proj_dir / "Monte_Carlo_output"
+    if not pcd_dir.exists():
+        raise FileNotFoundError(f"Pointcloud directory not found at {pcd_dir}")
     pcd_list = sorted(list(pcd_dir.glob(f"*.{pcd_ext}")))
     logger.info(f"Found {len(pcd_list)} pointclouds in {pcd_dir}")
 
     # Read reference point cloud from MC simulation
-    ref_pcd_path = pcd_dir.parent / "sparse_pts_reference.ply"
+    ref_pcd_path = proj_dir / "sparse_pts_reference.ply"
     if not ref_pcd_path.exists():
         raise FileNotFoundError(f"Reference pointcloud not found at {ref_pcd_path}")
-
     ref_pcd = load_pcd(ref_pcd_path)
     logger.info(f"Loaded reference pointcloud from {ref_pcd_path}")
 
@@ -813,12 +814,14 @@ def main(
 
 
 if __name__ == "__main__":
-    # proj_dir = Path("data/rossia/simulation_rossia_relative")
-    proj_dir = Path("data/rossia/simulation_rossia_gcp_aat")
-    # proj_dir = Path("data/belv_stereo/stereo_simu")
+    base_root = Path("/mnt/phd/metashapelib/data").resolve()
+
+    # proj_dir = base_root / "rossia/simulation_rossia_gcp_aat_io_fixed"
+    proj_dir = base_root / "belv_stereo/simulation_2022-07-28_15-02-49_allioest"
+
     pcd_ext = "ply"
     compute_full_covariance = True
-    use_dask = True
+    use_dask = False
 
     main(
         proj_dir,
