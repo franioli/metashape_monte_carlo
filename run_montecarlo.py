@@ -8,17 +8,20 @@ NaN = np.nan
 
 # Directory where output will be stored and active control file is saved.
 # The files will be generated in a sub-folder named "Monte_Carlo_output"
-project_dir = Path("/mnt/phd/metashapelib/data/belv_stereo/").resolve()
-ref_project_path = project_dir / "2022-07-28_15-02-49.psx"
-simu_name = f"simulation_{ref_project_path.stem}_allioest"
+# project_dir = Path("./data/rossia/").resolve()
+# ref_project_path = project_dir / "rossia_gcp_aat_io_fixed.psx"
+
+project_dir = Path("/media/francesco/OS/tmp/belv_lingua/")
+ref_project_path = project_dir / "lingua_uav_20220728.psx"
+simu_name = f"simulation_{ref_project_path.stem}"
 
 # Define how many times bundle adjustment (Metashape 'optimisation') will be carried out.
-num_randomisations = 400
+num_randomisations = 300
 
 # Run the Monte Carlo simulation in parallel
 # NOTE: Keep the number of workers low if are running on a single CPU as the Metashape bundle adjustment is already multi-threaded and will use all available cores. If this is set too high, it will slow down the simulation and some runs may stuck.
 run_parallel = True
-workers = 12
+workers = 10
 
 # Resume the Monte Carlo simulation from a specific run number. Set to -1 to start a new simulation.
 resume_sumulations_from = -1
@@ -57,4 +60,5 @@ mslib.montecarlo.run_simulation(
     resume_sumulations_from=resume_sumulations_from,
     optimise_intrinsics=optimise_intrinsics,
     pts_offset=pts_offset,
+    expand_region_factor=10,
 )

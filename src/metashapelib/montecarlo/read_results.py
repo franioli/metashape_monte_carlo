@@ -143,5 +143,10 @@ def lazy_load_pcd_stack(pcd_list: List[Path]):
 
 def load_pcd_stack(pcd_list: List[Path]):
     arrays = [load_pcd(path) for path in pcd_list]
+    lens = [len(ar) for ar in arrays]
+    if len(set(lens)) != 1:
+        raise ValueError(
+            "PCD files have different number of points, cannot stack them. Try to re-run the simulation with a larger region in Metashape."
+        )
     stack = np.stack(arrays, axis=0)
     return stack

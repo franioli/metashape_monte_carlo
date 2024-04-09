@@ -215,7 +215,7 @@ def make_precision_plot(
             [clim, clim, clim]
 
     # Create figure
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    fig, axes = plt.subplots(1, 3, figsize=(15, 3))
 
     # Loop through each axis
     for i, (title, prec, lim) in enumerate(zip(["X", "Y", "Z"], [sx, sy, sz], clim)):
@@ -408,6 +408,7 @@ def load_and_compute_stack_stats(
         mean = np.mean(stack, axis=0)
         std = np.std(stack, axis=0, ddof=cov_ddof)
         rms = rmse(stack, ref_pcd, axis=0)
+
     return stack, mean, std, rms
 
 
@@ -505,6 +506,25 @@ def main(
     stack, mean, std, rms = load_and_compute_stack_stats(
         pcd_list, ref_pcd, use_dask, cov_ddof
     )
+
+    # compute_transitory = True
+    # if compute_transitory:
+    #     take_every_n = 10
+    #     # stack2 = stack[::take_every_n, :, :]
+    #     stack2 = stack
+    #     std_progr = np.zeros((stack2.shape[0], stack2.shape[1], stack2.shape[2]))
+    #     for i in range(2, stack2.shape[0]):
+    #         cur_std = np.std(stack2[:i, :, :], axis=0, ddof=cov_ddof)
+    #         std_progr[i] = cur_std -std
+
+    #     fig, axes = plt.subplots(3, 1, figsize=(15, 5))
+
+    #     axes[0].set_xlabel("Number of iteration")
+    #     axes[0].set_ylabel("Standard deviation [m]")
+    #     axes[0].set_title("X")
+    #     axes[0].plot(std_progr[:, :, 0])
+
+    #     fig.savefig("transitory.png")
 
     # Compute full covariance matrix for each point (note that all the pcd are loaded in memory at once here!)
     if compute_full_covariance:
@@ -655,7 +675,16 @@ def main(
     # Create a las pcd with laspy
     logger.info("Writing pointclouds with point precision to LAS files...")
     rgb = np.uint16(np.asarray(o3d.io.read_point_cloud(str(ref_pcd_path)).colors) * 255)
-    scalar_fields = {"sx": std[:, 0], "sy": std[:, 1], "sz": std[:, 2]}
+    s_norm = (std[:, 0] ** 2 + std[:, 1] ** 2 + std[:, 2] ** 2) ** 0.5
+    scalar_fields = {
+        "sx": std[:, 0],
+        "sy": std[:, 1],
+        "sz": std[:, 2],
+        "s_norm": s_norm,
+        "rms_x": rms[:, 0],
+        "rms_y": rms[:, 1],
+        "rms_z": rms[:, 2],
+    }
     write_pcd_las(
         proj_dir / "point_precision.las",
         mean[:, 0],
@@ -664,14 +693,14 @@ def main(
         rgb=rgb,
         **scalar_fields,
     )
-    write_pcd_las(
-        proj_dir / "point_precision_helmert.las",
-        points_roto[:, 0],
-        points_roto[:, 1],
-        points_roto[:, 2],
-        rgb=rgb,
-        **scalar_fields,
-    )
+    # write_pcd_las(
+    #     proj_dir / "point_precision_helmert.las",
+    #     points_roto[:, 0],
+    #     points_roto[:, 1],
+    #     points_roto[:, 2],
+    #     rgb=rgb,
+    #     **scalar_fields,
+    # )
     logger.info("Done")
 
     ### Do Ground Control Analysis
@@ -814,10 +843,15 @@ def main(
 
 
 if __name__ == "__main__":
-    base_root = Path("/mnt/phd/metashapelib/data").resolve()
+    base_root = Path("./data").resolve()
 
-    # proj_dir = base_root / "rossia/simulation_rossia_gcp_aat_io_fixed"
-    proj_dir = base_root / "belv_stereo/simulation_2022-07-28_15-02-49_allioest"
+    proj_dir = base_root / "rossia/simulation_rossia_gcp_aat_io_fixed"
+    # proj_dir = base_root / "belv_lingua_2022/simulation_lingua_uav_20220728"
+    # proj_dir = base_root / "belv_stereo/simulation_2022-07-28_15-02-49_allioest"
+
+    proj_dir = Path(
+        "/media/francesco/OS/tmp/belv_lingua/simulation_lingua_uav_20220728"
+    )
 
     pcd_ext = "ply"
     compute_full_covariance = True

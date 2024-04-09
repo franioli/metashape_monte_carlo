@@ -1,3 +1,4 @@
+import chunk
 import csv
 import logging
 import math
@@ -48,6 +49,7 @@ def run_simulation(
     resume_sumulations_from: int = -1,
     optimise_intrinsics: Dict = default_intrinsics_optim,
     pts_offset: Union[List, np.ndarray, Metashape.Vector] = [NaN, NaN, NaN],
+    **kwargs,
 ):
     """
     Conducts a Monte Carlo simulation on a given project.
@@ -80,8 +82,9 @@ def run_simulation(
             project_path=project_path,
             simu_dir=simu_dir,
             pts_offset=pts_offset,
-            optimise_intrinsics=optimise_intrinsics,
             skip_optimisation=True,
+            optimise_intrinsics=optimise_intrinsics,
+            **kwargs,
         )
 
     # Check the initialisation of the simulation
@@ -128,6 +131,7 @@ def initialise_simulation(
     pts_offset: Metashape.Vector = Metashape.Vector([NaN, NaN, NaN]),
     skip_optimisation: bool = False,
     optimise_intrinsics: Dict = default_intrinsics_optim,
+    expand_region_factor: int = 5,
 ) -> None:
     logger.info("Initializing...")
 
@@ -186,23 +190,22 @@ def initialise_simulation(
         pts_offset = mc_utils.compute_coordinate_offset(original_chunk)
 
     # Expand region to include all possible points
-    expand_region(original_chunk, 1.5)
+    expand_region(original_chunk, expand_region_factor)
 
     # Carry out an initial bundle adjustment to ensure that everything subsequent has a consistent reference starting point.
     if not skip_optimisation:
         logger.info("Optimising cameras...")
         optimize_cameras(original_chunk, optimise_intrinsics)
 
-    # Save the sparse point cloud as text file including colour and covariance
     # NOTE: disabled for now
-    # logger.info("Exporting sparse point cloud with covariance information...")
-    # save_sparse(
-    #     original_chunk,
-    #     simu_dir / "sparse_pts_reference_cov.csv",
-    #     save_color=True,
-    #     save_cov=True,
-    #     sep=",",
-    # )
+    logger.info("Exporting sparse point cloud with covariance information...")
+    save_sparse(
+        original_chunk,
+        simu_dir / "sparse_pts_reference_cov.csv",
+        save_color=True,
+        save_cov=True,
+        sep=",",
+    )
 
     # Save the used offset to text file
     with open(simu_dir / "_coordinate_local_origin.txt", "w") as f:
@@ -246,13 +249,6 @@ def initialise_simulation(
             format=Metashape.PointCloudFormatPLY,
             crs=crs,
             shift=pts_offset,
-        )
-        save_sparse(
-            zero_error_chunk,
-            str(simu_dir / "sparse_pts_reference_cov.csv"),
-            save_color=True,
-            save_cov=True,
-            sep=",",
         )
 
     # Save the project
@@ -395,7 +391,13 @@ def run_iteration(
 
     # Export the results
     try:
-        export_results(chunk, run_idx, out_dir, pts_offset)
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor() as executor:
+            executor.submit(
+                export_results, run_doc, run_idx, out_dir, pts_offset, cleanup_run
+            )
+        # export_results(run_doc_path, run_doc, run_idx, out_dir, pts_offset)
         logger.info(f"Run {run_idx} - Exported results.")
     except Exception as e:
         logger.error(f"Error exporting results for run {run_idx}: {e}")
@@ -403,31 +405,20 @@ def run_iteration(
     # For debugging purposes, save the project
     # run_doc.save()
 
-    # Clean up the run directory
-    if cleanup_run:
-        run_doc_path.unlink()
-
     del chunk
     del run_doc
 
     logger.info(f"Finished run {run_idx}.")
 
-    ## Old method by copying the reference chunk
-    # ref_doc = Metashape.Document()
-    # ref_doc.open(str(runs_dir / "run_ref/run.psz"))
-    # chunk = ref_doc.chunks[0].copy()
-    # chunk.label = f"simu_chunk_{run_idx:04d}"
-    # ref_doc.delete(chunk)
-    # ref_doc.save()
-
     return True
 
 
 def export_results(
-    chunk: Metashape.Chunk,
+    doc: Metashape.Document,
     run_idx: int,
     out_dir: Path,
     pts_offset: Metashape.Vector = Metashape.Vector([NaN, NaN, NaN]),
+    cleanup_run: bool = True,
 ):
     """
     Exports the results of a processing chunk in various formats.
@@ -443,6 +434,9 @@ def export_results(
     Returns:
     None
     """
+    chunk = doc.chunk
+    doc_path = Path(doc.path)
+
     act_marker_flags = [m.reference.enabled for m in chunk.markers]
     num_act_markers = sum(act_marker_flags)
     crs = chunk.crs
@@ -507,6 +501,10 @@ def export_results(
         )
 
     logger.debug(f"Exported sparse point cloud to {out_dir / (basename + '_pts.ply')}")
+
+    # Clean up the run directory
+    if cleanup_run:
+        doc_path.unlink()
 
 
 if __name__ == "__main__":
