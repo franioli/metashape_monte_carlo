@@ -22,7 +22,7 @@ Download the [current .whl file](https://www.agisoft.com/downloads/installer/) a
 conda create -n metashape python=3.10
 conda activate metashape
 pip3 install Metashape-"XX".whl
-pip3 install -r requirements.txt
+pip3 install -e .
 ```
 
 ### License
