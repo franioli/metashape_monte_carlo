@@ -4,7 +4,7 @@ A library for extending Metashape functionalities.
 
 Current functionalities:
 
-- [x] Run Montecarlo simulation for estimating on-ground accuracy of a photogrammetric project.
+- [x] Run Montecarlo simulation for estimating on-ground accuracy of a photogrammetric project (upgraded version of the precision_estimate.py script from Mike James).
 - [x] Functions for automatizing processing workflow
 - [x] Functions for importing and exporting data
 - [ ] Integration with [Deep-Image-Matching](https://github.com/3DOM-FBK/deep-image-matching)
@@ -78,3 +78,7 @@ You need to manually install libffi6 with
 wget https://mirrors.kernel.org/ubuntu/pool/main/libf/libffi/libffi6_3.2.1-8_amd64.deb
 sudo apt install ./libffi6_3.2.1-8_amd64.deb
 ```
+
+## Credits
+The Monte Carlo simulation part is strongly inspired by the work "3-D uncertainty-based topographic change detection with structure-from-motion photogrammetry: precision maps for ground control and directly georeferenced surveys" by James et al. ([2017](https://doi.org/10.1002/esp.4125)) and "A MONTE CARLO SIMULATION STUDY ON THE DOME EFFECT" by Roncella et al. ([2021](https://doi.org/10.5194/isprs-archives-XLIII-B2-2021-53-2021)).
+
